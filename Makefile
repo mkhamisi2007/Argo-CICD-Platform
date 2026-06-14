@@ -68,13 +68,15 @@ tf-destroy: ## terraform destroy (run AFTER `make teardown`)
 
 ## --- Placeholder substitution (after tf-apply) -----------------------------
 
-fill-placeholders: ## Replace <ECR_URI>/<ECR_REPO_URI>/<ARGO_WORKFLOWS_ECR_ROLE_ARN> using terraform outputs
+fill-placeholders: ## Replace <ECR_URI>/<ECR_REPO_URI>/<ARGO_WORKFLOWS_ECR_ROLE_ARN>/<ACM_CERTIFICATE_ARN> using terraform outputs
 	@cd $(TF_DIR) && \
 	ECR_URI=$$(terraform output -raw ecr_repository_url) && \
 	ROLE_ARN=$$(terraform output -raw argo_workflows_ecr_role_arn) && \
+	CERT_ARN=$$(terraform output -raw acm_certificate_arn) && \
 	cd .. && \
 	echo "==> ECR_URI=$$ECR_URI" && \
 	echo "==> ARGO_WORKFLOWS_ECR_ROLE_ARN=$$ROLE_ARN" && \
+	echo "==> ACM_CERTIFICATE_ARN=$$CERT_ARN" && \
 	sed -i.bak "s#<ECR_URI>#$$ECR_URI#g" \
 		$(HELM_DIR)/values.yaml \
 		argo/rollouts/rollout-production.yaml && \
@@ -83,6 +85,8 @@ fill-placeholders: ## Replace <ECR_URI>/<ECR_REPO_URI>/<ARGO_WORKFLOWS_ECR_ROLE_
 		argo/workflows/workflow-template-deploy.yaml && \
 	sed -i.bak "s#<ARGO_WORKFLOWS_ECR_ROLE_ARN>#$$ROLE_ARN#g" \
 		argo/workflows/serviceaccount.yaml && \
+	sed -i.bak "s#<ACM_CERTIFICATE_ARN>#$$CERT_ARN#g" \
+		argo/events/ingress-webhook.yaml && \
 	find . -name '*.bak' -delete
 	@echo "==> Placeholders filled."
 

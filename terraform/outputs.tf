@@ -37,3 +37,8 @@ output "aws_region" {
   description = "AWS region the cluster is deployed in"
   value       = var.aws_region
 }
+
+output "acm_certificate_arn" {
+  description = "ARN of the validated ACM certificate for the ALB's HTTPS listener"
+  value       = aws_acm_certificate_validation.app.certificate_arn
+}

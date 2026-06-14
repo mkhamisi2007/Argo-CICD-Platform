@@ -17,6 +17,13 @@ metadata:
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip
     alb.ingress.kubernetes.io/group.name: argo-cicd-platform
+    # Load-balancer-scoped settings (apply to the whole shared ALB, not just this
+    # Ingress's rules): HTTPS listener using the ACM cert for *.app.m-khamisi.com,
+    # with HTTP redirected to HTTPS. Required because GitHub webhook deliveries and
+    # event-source-github.yaml's webhook URL use https://.
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:us-east-1:277707094115:certificate/527dda5d-4598-42e2-988f-a2b70b297664
     # The EventSource webhook server only registers /push; point the ALB health
     # check at it and accept its response codes for non-GitHub requests too.
     alb.ingress.kubernetes.io/healthcheck-path: /push
