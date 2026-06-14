@@ -6,7 +6,8 @@ metadata:
   name: health-check
   namespace: argo
 spec:
-  schedule: "*/30 * * * *"
+  schedules:
+    - "*/30 * * * *"
   concurrencyPolicy: Replace
   startingDeadlineSeconds: 300
   workflowSpec:
