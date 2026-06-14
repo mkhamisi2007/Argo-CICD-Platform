@@ -1,4 +1,4 @@
-# Four IRSA roles, each trusted by the EKS OIDC provider and scoped to a single
+# Five IRSA roles, each trusted by the EKS OIDC provider and scoped to a single
 # Kubernetes service account via the "sub" condition.
 
 locals {
@@ -6,6 +6,7 @@ locals {
   oidc_sub_alb_controller = "system:serviceaccount:kube-system:aws-load-balancer-controller"
   oidc_sub_external_dns   = "system:serviceaccount:kube-system:external-dns"
   oidc_sub_autoscaler     = "system:serviceaccount:kube-system:cluster-autoscaler"
+  oidc_sub_ebs_csi_driver = "system:serviceaccount:kube-system:ebs-csi-controller-sa"
 }
 
 # --- 1. argo-workflows-ecr ---
@@ -53,6 +54,7 @@ data "aws_iam_policy_document" "argo_workflows_ecr" {
     effect = "Allow"
     actions = [
       "ecr:BatchGetImage",
+      "ecr:GetDownloadUrlForLayer",
       "ecr:InitiateLayerUpload",
       "ecr:UploadLayerPart",
       "ecr:CompleteLayerUpload",
@@ -219,4 +221,41 @@ resource "aws_iam_role_policy" "cluster_autoscaler" {
   name   = "cluster-autoscaler"
   role   = aws_iam_role.cluster_autoscaler.id
   policy = data.aws_iam_policy_document.cluster_autoscaler.json
+}
+
+# --- 5. ebs-csi-controller (aws-ebs-csi-driver addon) ---
+
+data "aws_iam_policy_document" "ebs_csi_driver_trust" {
+  statement {
+    effect  = "Allow"
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+
+    principals {
+      type        = "Federated"
+      identifiers = [var.oidc_provider_arn]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "${var.oidc_provider_url}:sub"
+      values   = [local.oidc_sub_ebs_csi_driver]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "${var.oidc_provider_url}:aud"
+      values   = ["sts.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role" "ebs_csi_driver" {
+  name               = "ebs-csi-controller"
+  assume_role_policy = data.aws_iam_policy_document.ebs_csi_driver_trust.json
+  tags               = var.tags
+}
+
+resource "aws_iam_role_policy_attachment" "ebs_csi_driver" {
+  role       = aws_iam_role.ebs_csi_driver.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
 }

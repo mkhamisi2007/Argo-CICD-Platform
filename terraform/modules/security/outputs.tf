@@ -18,6 +18,11 @@ output "cluster_autoscaler_role_arn" {
   value       = aws_iam_role.cluster_autoscaler.arn
 }
 
+output "ebs_csi_driver_role_arn" {
+  description = "IAM role ARN for the ebs-csi-controller-sa service account"
+  value       = aws_iam_role.ebs_csi_driver.arn
+}
+
 output "waf_web_acl_arn" {
   description = "ARN of the WAFv2 Web ACL"
   value       = aws_wafv2_web_acl.this.arn
