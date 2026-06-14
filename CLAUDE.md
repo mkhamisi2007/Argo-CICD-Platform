@@ -11,8 +11,16 @@ AWS WAF, with Route53/ExternalDNS and a kube-prometheus-stack monitoring stack. 
 `README.md` for the full architecture diagram and operational runbook (triggering
 deploys, watching canaries, manual approval, rollback, teardown).
 
-There is currently **no live AWS account or cluster** — this repo is IaC/config only.
-All verification is static (fmt/validate/lint/template/parse), not a live deploy.
+This repo has been deployed to a live EKS cluster and verified end-to-end: a real
+`git push` flows through webhook → EventSource → Sensor → `ci-pipeline` →
+`deploy-pipeline` → staging, manual approval → `deploy-pipeline` → production canary
+Rollout, with both `staging.app.<domain>` and `app.<domain>` reachable over HTTPS. See
+"Known gotchas from the live deploy" below for issues found this way and how they were
+fixed.
+
+If you're working in an environment **without** AWS/kubectl credentials, fall back to
+static verification (fmt/validate/lint/template/parse) — the commands below cover both
+cases.
 
 ## Commands
 
@@ -142,3 +150,52 @@ Several manifests still contain `<UPPER_SNAKE_CASE>` placeholders (e.g. `<ECR_UR
 after `terraform apply` using `terraform output` / `aws iam get-role` — see the table
 in `README.md` step 3. These are intentional, not bugs or TODOs to
 remove.
+
+### Known gotchas from the live deploy
+These were found by exercising the full pipeline against a real AWS account and are
+now fixed in the repo — documented here so the underlying constraints aren't
+reintroduced by future edits.
+
+- **Every Ingress in the shared `argo-cicd-platform` IngressGroup needs
+  `alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'`**
+  (`helm/app/templates/ingress.yaml` / `helm/app/values.yaml`,
+  `argo/events/ingress-webhook.yaml`). Without it, an Ingress with no `certificate-arn`
+  defaults to `{"HTTP": 80}` only — and since the group's port-80 listener is taken
+  over by another member's `ssl-redirect`, the AWS Load Balancer Controller **silently
+  drops that Ingress's rule from the merged model with no warning or error at any log
+  level**. If a host stops getting a TargetGroupBinding, check this annotation first.
+- **The AWS Load Balancer Controller IAM policy
+  (`terraform/modules/security/policies/alb-controller-policy.json`) must include
+  `elasticloadbalancing:SetRulePriorities`** — needed once the shared IngressGroup has
+  3+ member Ingresses (production/staging/webhook), since adding a new host rule
+  requires reordering existing rule priorities. Missing this produces a
+  `FailedDeployModel` / `AccessDenied` event on the affected Ingress, not a Terraform
+  error (it's an IAM action, not a resource Terraform tracks for drift).
+- **`module.eks.aws_eks_node_group.default` has
+  `lifecycle.ignore_changes = [scaling_config[0].desired_size]`**
+  (`terraform/modules/eks/main.tf`). Cluster Autoscaler changes `desired_size` at
+  runtime; without `ignore_changes`, every `terraform apply` would scale the node
+  group back to `var.node_desired_size` and could terminate nodes running live pods.
+- **`argo/rollouts/rollout-production.yaml`'s `spec.selector.matchLabels` /
+  `spec.template.metadata.labels` must exactly match the Helm chart's
+  `selectorLabels`** (`app.kubernetes.io/name` + `app.kubernetes.io/instance`,
+  from `helm/app/templates/_helpers.tpl`). `spec.selector` is effectively immutable —
+  if a Rollout was ever created (e.g. by a raw `kubectl apply -f argo/rollouts/`)
+  with different labels, `helm upgrade --install` will report success but silently
+  no-op the selector change. Fix is to `kubectl delete rollout` (safe once 0 pods
+  reference the old selector) and let the next `helm upgrade --install` recreate it.
+- **`deploy-helm` in `argo/workflows/workflow-template-deploy.yaml` does NOT use
+  `helm upgrade --install --wait`.** Helm's generic CRD-readiness wait looks for
+  `status.conditions[].type == "Ready"`, which the Argo Rollouts CRD never sets (it
+  uses `Healthy`/`Available`/`Progressing`/`Completed` instead) — `--wait` would block
+  until `--timeout` and fail even when the Rollout is genuinely healthy. The
+  `smoke-test` step (poll `/health`, 12x5s) is the readiness gate instead.
+- **`argo-workflows-deployer` ClusterRole (`argo/workflows/rbac.yaml`) needs
+  `namespaces: ["get", "create"]`** — `helm upgrade --install --create-namespace`
+  in `deploy-helm` needs this to create `staging`/`production` if they don't exist.
+- **`trigger-deploy` (in `workflow-template-ci.yaml`) and `trigger-production` (in
+  `workflow-template-deploy.yaml`) must pass an explicit `release-name` parameter**
+  (`argo-cicd-app`) — `deploy-pipeline`'s `release-name` argument has no default, and
+  Argo Workflows rejects a child Workflow submission that's missing a
+  required-with-no-default parameter (`invalid spec: spec.arguments.release-name...
+  is required`).

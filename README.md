@@ -229,6 +229,12 @@ argo resume -n argo <deploy-staging-xxxxx>
 Resuming runs `trigger-production`, which submits a new `deploy-pipeline` Workflow
 with `environment: production`.
 
+> If multiple `deploy-staging-*` workflows pile up suspended at `approve-production`
+> (e.g. several pushes landed before you approved), only resume the one with the
+> `image-tag` you want in production and `argo stop -n argo <name>` the rest —
+> otherwise each resumed workflow will independently trigger its own production
+> deploy.
+
 ## Forcing a rollback
 
 If a canary analysis fails, Argo Rollouts aborts and rolls back automatically (and
@@ -239,6 +245,66 @@ posts to Slack via the notification subscription in
 kubectl argo rollouts abort argo-cicd-app -n production
 kubectl argo rollouts undo argo-cicd-app -n production
 ```
+
+## Troubleshooting
+
+Issues found and fixed while exercising the full pipeline against a live AWS account:
+
+**A host (`app.<domain>` / `staging.app.<domain>` / `webhook.app.<domain>`) returns
+`000`/connection refused, with no matching `TargetGroupBinding`:**
+The shared ALB IngressGroup (`group.name: argo-cicd-platform`) merges all member
+Ingresses into one model. If an Ingress is missing
+`alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'`, it defaults
+to HTTP:80-only — and if another member's `ssl-redirect` has taken over the group's
+port-80 listener, this Ingress's rule is **silently dropped from the merged model**
+(no warning at any log level). Check the annotation is present on
+`helm/app/templates/ingress.yaml` (via `helm/app/values.yaml`) and
+`argo/events/ingress-webhook.yaml`, then force a reconcile:
+
+```bash
+kubectl annotate ingress -n <namespace> app-ingress reconcile-trigger=$(date +%s) --overwrite
+```
+
+**`kubectl describe ingress` shows repeated `Warning FailedDeployModel ...
+elasticloadbalancing:SetRulePriorities ... AccessDenied`:**
+The AWS Load Balancer Controller's IAM policy
+(`terraform/modules/security/policies/alb-controller-policy.json`) is missing
+`elasticloadbalancing:SetRulePriorities`, needed once the IngressGroup has 3+ member
+Ingresses (it has to reorder existing rule priorities to insert a new host rule). Fix
+the policy and `terraform apply` (updates the existing `aws_iam_policy` in place — no
+role/attachment changes), then re-annotate the Ingress as above.
+
+**To inspect what the ALB controller actually built for the IngressGroup**, temporarily
+enable debug logging (use `--log-level=debug`, **not** `--v=4` — the latter crashes
+v3.4.0):
+
+```bash
+kubectl patch deployment -n kube-system aws-load-balancer-controller --type=json \
+  -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--log-level=debug"}]'
+# ... trigger a reconcile, grep the leader pod's logs for "successfully built model" ...
+kubectl patch deployment -n kube-system aws-load-balancer-controller --type=json \
+  -p='[{"op":"remove","path":"/spec/template/spec/containers/0/args/4"}]'
+```
+
+**`deploy-helm` step fails with `UPGRADE FAILED: resource Rollout/<ns>/argo-cicd-app
+not ready ... context deadline exceeded`, even though
+`kubectl argo rollouts get rollout` shows it Healthy:**
+This was a pre-existing bug, now fixed — `deploy-helm` no longer passes
+`--wait --timeout` to `helm upgrade --install`. Helm's generic CRD-readiness check
+looks for a `status.conditions[].type == "Ready"` condition that the Argo Rollouts CRD
+never sets. `smoke-test` (poll `/health`) is the readiness gate instead.
+
+**`deploy-helm` / `smoke-test` fails with `cannot be imported ... invalid ownership
+metadata` or `Service "app-stable-svc" has unmatch label ... in rollout`:**
+The production `Rollout` was originally created by a raw `kubectl apply -f
+argo/rollouts/` during bootstrap, with different labels than
+`helm/app/templates/_helpers.tpl`'s `selectorLabels`. Helm can adopt an existing
+resource (label `app.kubernetes.io/managed-by: Helm` +
+`meta.helm.sh/release-name`/`release-namespace` annotations), but `spec.selector` is
+effectively immutable — `helm upgrade` reports success without actually fixing it. If
+this happens: `kubectl delete rollout -n <namespace> argo-cicd-app` (safe once it has
+0 ready replicas under the old selector) and re-run `helm upgrade --install`, which
+recreates it correctly.
 
 ## Estimated AWS cost
 
