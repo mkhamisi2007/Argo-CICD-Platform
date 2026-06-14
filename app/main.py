@@ -1,6 +1,6 @@
 import os
 
-from fastapi import FastAPI
+from fastapi import FastAPI 
 from prometheus_fastapi_instrumentator import Instrumentator
 
 APP_VERSION = os.getenv("APP_VERSION", "0.1.0")
