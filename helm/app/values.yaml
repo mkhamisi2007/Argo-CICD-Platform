@@ -18,6 +18,12 @@ ingress:
     kubernetes.io/ingress.class: alb
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip
+    # Without this, the controller defaults this Ingress's listen-ports to
+    # {"HTTP": 80} only (no cert-arn), and since the group's port-80 listener is
+    # taken over by github-webhook-ingress's ssl-redirect, this Ingress's rule is
+    # silently dropped from the merged IngressGroup model entirely. Declaring 443
+    # here gets its host rule attached to the shared HTTPS listener.
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
     # Shares one ALB across staging/production app Ingresses and the GitHub webhook
     # Ingress (argo/events/ingress-webhook.yaml) - keeps cost down to a single ALB
     # and matches the single-ALB assumption in terraform/waf.tf.

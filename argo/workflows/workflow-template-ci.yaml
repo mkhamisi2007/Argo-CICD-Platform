@@ -156,5 +156,7 @@ spec:
                   value: "{{workflow.parameters.repo-url}}"
                 - name: ecr-repo
                   value: "{{workflow.parameters.ecr-repo}}"
+                - name: release-name
+                  value: argo-cicd-app
                 - name: app-namespace
                   value: staging
