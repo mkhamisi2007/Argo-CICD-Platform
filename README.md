@@ -78,74 +78,108 @@ flowchart LR
 
 ## Setup
 
-### 1. Provision AWS infrastructure
+This repo includes a `Makefile` that wires together every step below in order. Run
+`make help` at any time to see the full target list and the recommended run order.
+
+### 0. Configure variables and secrets
 
 ```bash
 cd terraform
 cp terraform.tfvars.example terraform.tfvars
-# edit terraform.tfvars: hosted_zone_name, app_hostname, slack_webhook_url, ...
+# edit terraform.tfvars: hosted_zone_name, app_hostname, slack_webhook_url, aws_region, ...
+cd ..
 
-terraform init
-terraform apply
+cp .env.example .env
+# edit .env: SLACK_WEBHOOK_URL, GITHUB_PAT, GITHUB_WEBHOOK_SECRET
+```
+
+`.env` is gitignored and read automatically by `make bootstrap`,
+`make fill-slack-secret`, and `make github-secret` — never commit it.
+
+### 1. Provision AWS infrastructure
+
+```bash
+make tf-init
+make tf-validate
+make tf-apply
 ```
 
 This creates the VPC, EKS cluster (private nodes), ECR repo, IRSA roles, WAF Web
 ACL, and installs the AWS Load Balancer Controller, ExternalDNS and Cluster
 Autoscaler via Helm.
 
-Point `kubectl`/`helm` at the new cluster (use your `cluster_name`/`aws_region`
-from `terraform.tfvars`):
+### 2. Fill in placeholders from the Terraform outputs
 
 ```bash
-aws eks update-kubeconfig --name argo-cicd-cluster --region eu-west-3
+make fill-placeholders
 ```
 
-### 2. Install the Argo ecosystem + monitoring
+Replaces `<ECR_URI>` / `<ECR_REPO_URI>` / `<ARGO_WORKFLOWS_ECR_ROLE_ARN>` in
+`helm/app/values.yaml`, `argo/rollouts/rollout-production.yaml`,
+`argo/events/sensor-github.yaml`, `argo/workflows/workflow-template-deploy.yaml`, and
+`argo/workflows/serviceaccount.yaml` using `terraform output`.
+
+### 3. Point kubectl/helm at the new cluster
 
 ```bash
-export SLACK_WEBHOOK_URL="https://hooks.slack.com/services/..."
-./scripts/bootstrap.sh
+make kubeconfig
+```
+
+Runs `aws eks update-kubeconfig` using the `cluster_name`/`aws_region` from the
+Terraform outputs.
+
+### 4. Install the Argo ecosystem + monitoring
+
+```bash
+make bootstrap
 ```
 
 Installs, in order: Argo Workflows (`argo`), Argo Events (`argo-events`), Argo
 Rollouts (`argo-rollouts`), the `kubectl-argo-rollouts` plugin, and
-`kube-prometheus-stack` (`monitoring`).
+`kube-prometheus-stack` (`monitoring`). Reads `SLACK_WEBHOOK_URL` from `.env`.
 
-### 3. Apply the Argo manifests
+### 5. Fill in the Slack webhook placeholder
 
-Fill in the remaining placeholders first (the script prints exactly which ones):
+```bash
+make fill-slack-secret
+```
 
-| File | Placeholder | Value |
-|------|-------------|-------|
-| `argo/workflows/serviceaccount.yaml` | `<ARGO_WORKFLOWS_ECR_ROLE_ARN>` | `aws iam get-role --role-name argo-workflows-ecr --query Role.Arn --output text` |
-| `argo/events/sensor-github.yaml`, `argo/rollouts/rollout-production.yaml` | `<ECR_REPO_URI>` / `<ECR_URI>` | `terraform output -raw ecr_repository_url` |
-| `argo/rollouts/analysis-template.yaml` | `<SLACK_WEBHOOK_URL>` | your Slack webhook (also set by `bootstrap.sh` as a Secret) |
+Replaces `<SLACK_WEBHOOK_URL>` in `argo/rollouts/analysis-template.yaml`. Reads
+`SLACK_WEBHOOK_URL` from `.env`.
+
+### 6. Create the GitHub webhook credentials secret
+
+```bash
+make github-secret
+```
+
+Creates the `github-access` Secret in `argo-events` (GitHub PAT + webhook shared
+secret) from `GITHUB_PAT`/`GITHUB_WEBHOOK_SECRET` in `.env`. The PAT needs
+`admin:repo_hook`/`repo` scope so the EventSource can auto-register the webhook.
 
 > `argo/events/event-source-github.yaml` is already set up for the
-> `mkhamisi2007/argo-cicd-platform` GitHub repo and the `m-khamisi.com` domain
+> `mkhamisi2007/Argo-CICD-Platform` GitHub repo and the `m-khamisi.com` domain
 > (`hosted_zone_name`/`app_hostname` in `terraform.tfvars.example`). Update these if
 > you fork or rename the repo.
 
-Create the GitHub webhook credentials secret:
+### 7. Apply the Argo manifests
 
 ```bash
-kubectl create secret generic github-access -n argo-events \
-  --from-literal=token="<GITHUB_PAT>" \
-  --from-literal=secret="<WEBHOOK_SHARED_SECRET>"
+make apply-argo
 ```
 
-Then apply everything:
+Applies `argo/workflows/`, `argo/events/` (including the GitHub webhook Ingress),
+`argo/rollouts/`, and `argo/cron/`.
+
+### 8. Re-run terraform apply to associate WAF with the ALB
 
 ```bash
-kubectl apply -f argo/workflows/
-kubectl apply -f argo/events/
-kubectl apply -f argo/rollouts/
-kubectl apply -f argo/cron/
+make tf-apply
 ```
 
 > WAF ↔ ALB association: the ALB is created by the AWS Load Balancer Controller only
-> once the Ingress above exists. Re-run `terraform apply` afterwards so
-> `aws_wafv2_web_acl_association` picks up the new ALB ARN.
+> once the Ingresses from step 7 exist. This second `terraform apply` lets
+> `aws_wafv2_web_acl_association` pick up the new ALB ARN.
 
 ## Triggering a deployment
 
@@ -222,10 +256,10 @@ control-plane pricing in most regions — check current pricing for `eu-west-3`.
 ## Teardown
 
 ```bash
-./scripts/teardown.sh   # removes Argo/monitoring + the app's ALB & DNS records
-cd terraform && terraform destroy
+make teardown      # removes Argo/monitoring + the app's ALB & DNS records
+make tf-destroy
 ```
 
-Running `teardown.sh` first lets the AWS Load Balancer Controller and ExternalDNS
+Running `make teardown` first lets the AWS Load Balancer Controller and ExternalDNS
 deprovision the ALB and Route 53 records before the VPC/EKS cluster they depend on
 is destroyed.
