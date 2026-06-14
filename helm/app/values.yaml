@@ -1,0 +1,59 @@
+image:
+  repository: <ECR_URI> # e.g. 123456789012.dkr.ecr.eu-west-3.amazonaws.com/argo-cicd-app
+  tag: latest
+  pullPolicy: Always
+
+replicaCount: 2
+
+service:
+  port: 80
+  targetPort: 8080
+
+ingress:
+  enabled: true
+  # Must be set per-environment (host-specific rule) so that staging and production
+  # Ingress objects don't collide when sharing one ALB via group.name below.
+  host: app.m-khamisi.com
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    # Shares one ALB across staging/production app Ingresses and the GitHub webhook
+    # Ingress (argo/events/ingress-webhook.yaml) - keeps cost down to a single ALB
+    # and matches the single-ALB assumption in terraform/waf.tf.
+    alb.ingress.kubernetes.io/group.name: argo-cicd-platform
+    external-dns.alpha.kubernetes.io/hostname: app.m-khamisi.com
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+serviceAccount:
+  create: true
+  name: argo-cicd-app
+  annotations: {}
+
+# When enabled, templates/deployment.yaml renders an Argo Rollout (canary) instead of
+# a plain Deployment, and templates/service.yaml renders both the stable and canary
+# Services referenced by the Rollout's trafficRouting.
+rollout:
+  enabled: true
+  canary:
+    steps:
+      - setWeight: 10
+      - pause:
+          duration: 2m
+      - analysis:
+          templates:
+            - templateName: success-rate
+      - setWeight: 50
+      - pause:
+          duration: 2m
+      - analysis:
+          templates:
+            - templateName: success-rate
+      - setWeight: 100

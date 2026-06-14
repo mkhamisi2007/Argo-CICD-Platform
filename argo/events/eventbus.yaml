@@ -1,0 +1,12 @@
+# Required by Argo Events: the message bus the EventSource publishes to and the
+# Sensor subscribes from. Every EventSource/Sensor in this namespace uses the
+# EventBus named "default" implicitly.
+apiVersion: argoproj.io/v1alpha1
+kind: EventBus
+metadata:
+  name: default
+  namespace: argo-events
+spec:
+  jetstream:
+    version: latest
+    replicas: 3

@@ -1,0 +1,68 @@
+# Used by the production Rollout's canary "analysis" steps. Both metrics must stay
+# within their successCondition for `count` consecutive intervals or Argo Rollouts
+# aborts the rollout (auto rollback) and the configured notification fires (see
+# the notifications ConfigMap below).
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: success-rate
+  namespace: production
+spec:
+  metrics:
+    - name: success-rate
+      interval: 60s
+      count: 3
+      successCondition: result[0] >= 0.95
+      provider:
+        prometheus:
+          address: http://prometheus-stack-kube-prom-prometheus.monitoring:9090
+          query: |
+            sum(rate(http_requests_total{job="argo-cicd-app", status!~"5.."}[2m]))
+            /
+            sum(rate(http_requests_total{job="argo-cicd-app"}[2m]))
+
+    - name: latency-p99
+      interval: 60s
+      count: 3
+      successCondition: result[0] <= 0.5
+      provider:
+        prometheus:
+          address: http://prometheus-stack-kube-prom-prometheus.monitoring:9090
+          query: |
+            histogram_quantile(0.99,
+              sum(rate(http_request_duration_seconds_bucket{job="argo-cicd-app"}[2m])) by (le)
+            )
+---
+# Argo Rollouts notification subscription: fires when the Rollout (referenced via
+# the "notifications.argoproj.io/subscribe..." annotation in rollout-production.yaml)
+# is aborted by a failed analysis run, posting to the same Slack incoming webhook
+# used by the Argo Workflows pipelines.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argo-rollouts-notification-configuration
+  namespace: production
+data:
+  service.webhook.slack: |
+    url: $slack-webhook-url
+    headers:
+      - name: Content-Type
+        value: application/json
+  template.rollout-aborted: |
+    webhook:
+      slack:
+        method: POST
+        body: |
+          {"text": ":rotating_light: Rollout {{.rollout.metadata.name}} in {{.rollout.metadata.namespace}} was aborted - canary analysis failed, auto-rolled-back to stable."}
+  trigger.on-rollout-aborted: |
+    - send: [rollout-aborted]
+      when: rollout.status.phase == 'Degraded'
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: argo-rollouts-notification-secret
+  namespace: production
+type: Opaque
+stringData:
+  slack-webhook-url: "<SLACK_WEBHOOK_URL>"

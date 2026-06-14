@@ -1,0 +1,97 @@
+# Helm values for the kube-prometheus-stack chart (namespace: monitoring).
+# Install with:
+#   helm upgrade --install prometheus-stack prometheus-community/kube-prometheus-stack \
+#     --namespace monitoring --create-namespace -f monitoring/prometheus-values.yaml
+
+prometheus:
+  prometheusSpec:
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+
+  # Scrape the FastAPI app's /metrics endpoint every 15s. The Service selector
+  # matches the labels applied by helm/app (app.kubernetes.io/name: argo-cicd-app),
+  # and jobLabel makes the resulting Prometheus `job` label "argo-cicd-app" — the
+  # value used by argo/rollouts/analysis-template.yaml and the alert rules below.
+  additionalServiceMonitors:
+    - name: argo-cicd-app
+      jobLabel: app.kubernetes.io/name
+      selector:
+        matchLabels:
+          app.kubernetes.io/name: argo-cicd-app
+      namespaceSelector:
+        any: true
+      endpoints:
+        - port: http
+          path: /metrics
+          interval: 15s
+
+additionalPrometheusRulesMap:
+  argo-cicd-app-rules:
+    groups:
+      - name: argo-cicd-app
+        rules:
+          - alert: HighErrorRate
+            expr: |
+              sum(rate(http_requests_total{job="argo-cicd-app", status=~"5.."}[2m]))
+              /
+              sum(rate(http_requests_total{job="argo-cicd-app"}[2m]))
+              > 0.05
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "argo-cicd-app error rate above 5%"
+              description: "More than 5% of requests to argo-cicd-app have returned 5xx for 2 minutes."
+
+          - alert: HighLatency
+            expr: |
+              histogram_quantile(0.99,
+                sum(rate(http_request_duration_seconds_bucket{job="argo-cicd-app"}[2m])) by (le)
+              ) > 0.5
+            for: 2m
+            labels:
+              severity: warning
+            annotations:
+              summary: "argo-cicd-app p99 latency above 500ms"
+              description: "p99 request latency for argo-cicd-app has exceeded 500ms for 2 minutes."
+
+          - alert: RolloutFailed
+            expr: rollout_info{phase="Degraded"} == 1
+            for: 0m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Argo Rollout {{ $labels.name }} is Degraded"
+              description: "Rollout {{ $labels.name }} in namespace {{ $labels.namespace }} entered the Degraded phase (canary analysis failed / auto rollback)."
+
+alertmanager:
+  config:
+    global:
+      resolve_timeout: 5m
+    route:
+      receiver: slack
+      group_by: ["alertname"]
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 3h
+    receivers:
+      - name: slack
+        slack_configs:
+          - api_url: "<SLACK_WEBHOOK_URL>"
+            channel: "#argo-cicd-alerts"
+            send_resolved: true
+            title: '{{ .CommonAnnotations.summary }}'
+            text: '{{ .CommonAnnotations.description }}'
+
+grafana:
+  enabled: true
+  defaultDashboardsEnabled: true
+
+# NOTE: the "WAF Blocked Requests" panel in grafana-dashboard.json reads
+# aws_wafv2_blocked_requests_sum, which comes from a separate
+# yet-another-cloudwatch-exporter (or prometheus-cloudwatch-exporter) deployment
+# scraping the "AWS/WAFV2" namespace / "BlockedRequests" metric for the Web ACL
+# created in terraform/modules/security/waf.tf. That exporter is out of scope for
+# this chart's values but must expose a /metrics endpoint with a matching
+# ServiceMonitor for the panel to populate.

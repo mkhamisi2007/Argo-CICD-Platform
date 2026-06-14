@@ -1,0 +1,68 @@
+# Reference manifest documenting the production canary strategy (Layer 5). The
+# deploy pipeline does NOT `kubectl apply` this file directly — it is rendered by
+# helm/app/templates/deployment.yaml (`helm upgrade --install ... -f
+# values-production.yaml`), which implements this exact strategy with the image
+# supplied by the CI pipeline. This file is kept as a standalone, readable copy of
+# what gets deployed to the "production" namespace, and as the target for the
+# Argo Rollouts notification subscription below.
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: argo-cicd-app
+  namespace: production
+  annotations:
+    notifications.argoproj.io/subscribe.on-rollout-aborted.slack: ""
+spec:
+  replicas: 2
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: argo-cicd-app
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: argo-cicd-app
+    spec:
+      containers:
+        - name: argo-cicd-app
+          image: <ECR_URI>:<IMAGE_TAG>
+          ports:
+            - name: http
+              containerPort: 8080
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+  strategy:
+    canary:
+      steps:
+        - setWeight: 10
+        - pause:
+            duration: 2m
+        - analysis:
+            templates:
+              - templateName: success-rate
+        - setWeight: 50
+        - pause:
+            duration: 2m
+        - analysis:
+            templates:
+              - templateName: success-rate
+        - setWeight: 100
+      canaryService: app-canary-svc
+      stableService: app-stable-svc
+      trafficRouting:
+        alb:
+          ingress: app-ingress
+          servicePort: 80

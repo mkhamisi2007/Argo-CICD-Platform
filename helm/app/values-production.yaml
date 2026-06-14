@@ -1,0 +1,5 @@
+ingress:
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: app.m-khamisi.com
+
+replicaCount: 2

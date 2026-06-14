@@ -1,0 +1,40 @@
+# Receives GitHub "push" webhooks. Exposed to the internet via the same ALB/Ingress
+# as the app (path /push), with DNS handled by ExternalDNS.
+#
+# Prerequisite: a Secret "github-access" in namespace argo-events with keys
+# "token" (a GitHub PAT with repo:admin hook scope, used to auto-register the
+# webhook) and "secret" (the webhook shared secret used to validate payloads).
+apiVersion: argoproj.io/v1alpha1
+kind: EventSource
+metadata:
+  name: github
+  namespace: argo-events
+spec:
+  service:
+    ports:
+      - port: 12000
+        targetPort: 12000
+  github:
+    push:
+      repositories:
+        - owner: mkhamisi2007
+          names:
+            - Argo-CICD-Platform
+      organizations: []
+      webhook:
+        endpoint: /push
+        port: "12000"
+        method: POST
+        url: https://webhook.app.m-khamisi.com
+        type: push
+      events:
+        - "push"
+      apiToken:
+        name: github-access
+        key: token
+      webhookSecret:
+        name: github-access
+        key: secret
+      insecure: false
+      active: true
+      contentType: json

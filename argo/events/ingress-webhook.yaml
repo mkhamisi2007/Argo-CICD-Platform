@@ -1,0 +1,36 @@
+# Routes GitHub's webhook POST (https://webhook.app.m-khamisi.com/push) to the
+# Argo Events EventSource service "github-eventsource-svc" (auto-created by the
+# EventSource controller for event-source-github.yaml, named "<eventsource-name>
+# -eventsource-svc", exposing the port from spec.service.ports).
+#
+# Shares one ALB with the app's staging/production Ingresses via group.name
+# (see helm/app/values.yaml) - ALB rules are host/path-specific so all three
+# can coexist on the same load balancer. ExternalDNS creates the
+# webhook.app.m-khamisi.com record pointing at that ALB.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: github-webhook-ingress
+  namespace: argo-events
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/group.name: argo-cicd-platform
+    # The EventSource webhook server only registers /push; point the ALB health
+    # check at it and accept its response codes for non-GitHub requests too.
+    alb.ingress.kubernetes.io/healthcheck-path: /push
+    alb.ingress.kubernetes.io/success-codes: "200-499"
+    external-dns.alpha.kubernetes.io/hostname: webhook.app.m-khamisi.com
+spec:
+  rules:
+    - host: webhook.app.m-khamisi.com
+      http:
+        paths:
+          - path: /push
+            pathType: Prefix
+            backend:
+              service:
+                name: github-eventsource-svc
+                port:
+                  number: 12000

@@ -1,0 +1,26 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: app-ingress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "argo-cicd-app.labels" . | nindent 4 }}
+  annotations:
+    {{- toYaml .Values.ingress.annotations | nindent 4 }}
+spec:
+  rules:
+    - host: {{ .Values.ingress.host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                # Argo Rollouts manages weighted routing to the canary service via
+                # this Ingress when the canary strategy's trafficRouting.alb is set;
+                # the stable service is the default/full-weight backend.
+                name: app-stable-svc
+                port:
+                  number: {{ .Values.service.port }}
+{{- end }}

@@ -1,0 +1,168 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: deploy-pipeline
+  namespace: argo
+spec:
+  serviceAccountName: argo-workflows
+  entrypoint: deploy
+  onExit: notify-slack
+
+  arguments:
+    parameters:
+      - name: image-tag
+        # short git commit SHA to deploy
+      - name: environment
+        # "staging" or "production"
+      - name: repo-url
+        default: "https://github.com/your-org/argo-cicd-platform.git"
+      - name: ecr-repo
+        default: "<ECR_REPO_URI>"
+      - name: release-name
+        default: "argo-cicd-app"
+      - name: app-namespace
+        default: "default"
+
+  templates:
+    - name: deploy
+      steps:
+        - - name: deploy-helm
+            template: deploy-helm
+
+        - - name: smoke-test
+            template: smoke-test
+
+        - - name: approve-production
+            template: approve
+            when: "{{workflow.parameters.environment}} == staging"
+
+        - - name: integration-test
+            template: integration-test
+            when: "{{workflow.parameters.environment}} == staging"
+
+        - - name: trigger-production
+            template: trigger-production
+            when: "{{workflow.parameters.environment}} == staging"
+
+    # --- deploy-helm: helm upgrade --install with the environment's values file,
+    # overriding image.repository/image.tag for this build ---
+    - name: deploy-helm
+      initContainers:
+        - name: clone
+          image: alpine/git:latest
+          command: ["sh", "-c"]
+          args:
+            - git clone --depth 1 "{{workflow.parameters.repo-url}}" /src
+          mirrorVolumeMounts: true
+      container:
+        image: dtzar/helm-kubectl:3.14
+        command: ["sh", "-c"]
+        args:
+          - |
+            set -ex
+            helm upgrade --install "{{workflow.parameters.release-name}}" /src/helm/app \
+              --namespace "{{workflow.parameters.app-namespace}}" --create-namespace \
+              -f "/src/helm/app/values-{{workflow.parameters.environment}}.yaml" \
+              --set image.repository="{{workflow.parameters.ecr-repo}}" \
+              --set image.tag="{{workflow.parameters.image-tag}}" \
+              --wait --timeout 5m
+        volumeMounts:
+          - name: src
+            mountPath: /src
+      volumes:
+        - name: src
+          emptyDir: {}
+
+    # --- smoke-test: poll /health every 5s, up to 12 times (1 minute) ---
+    - name: smoke-test
+      container:
+        image: curlimages/curl:8.7.1
+        command: ["sh", "-c"]
+        args:
+          - |
+            set -e
+            url="http://app-stable-svc.{{workflow.parameters.app-namespace}}.svc.cluster.local/health"
+            for i in $(seq 1 12); do
+              if curl -fsS "$url"; then
+                echo "smoke test passed"
+                exit 0
+              fi
+              echo "attempt $i/12 failed, retrying in 5s"
+              sleep 5
+            done
+            echo "smoke test failed after 12 attempts"
+            exit 1
+
+    # --- approve-production: manual gate between staging and production ---
+    - name: approve
+      suspend: {}
+
+    # --- integration-test: basic API checks against the staging endpoint ---
+    - name: integration-test
+      container:
+        image: curlimages/curl:8.7.1
+        command: ["sh", "-c"]
+        args:
+          - |
+            set -ex
+            base="http://app-stable-svc.{{workflow.parameters.app-namespace}}.svc.cluster.local"
+            curl -fsS "$base/" | grep -q '"status":"ok"'
+            curl -fsS "$base/health" | grep -q '"healthy":true'
+
+    # --- trigger-production: create a deploy Workflow for environment=production ---
+    - name: trigger-production
+      resource:
+        action: create
+        manifest: |
+          apiVersion: argoproj.io/v1alpha1
+          kind: Workflow
+          metadata:
+            generateName: deploy-production-
+            namespace: argo
+          spec:
+            serviceAccountName: argo-workflows
+            workflowTemplateRef:
+              name: deploy-pipeline
+            arguments:
+              parameters:
+                - name: image-tag
+                  value: "{{workflow.parameters.image-tag}}"
+                - name: environment
+                  value: production
+                - name: repo-url
+                  value: "{{workflow.parameters.repo-url}}"
+                - name: ecr-repo
+                  value: "{{workflow.parameters.ecr-repo}}"
+                - name: release-name
+                  value: "{{workflow.parameters.release-name}}"
+                - name: app-namespace
+                  value: production
+
+    # --- notify-slack: exit handler, posts only when the workflow did not succeed ---
+    - name: notify-slack
+      steps:
+        - - name: notify
+            template: slack-message
+            when: "{{workflow.status}} != Succeeded"
+
+    - name: slack-message
+      container:
+        image: curlimages/curl:8.7.1
+        command: ["sh", "-c"]
+        args:
+          - |
+            set -ex
+            curl -fsS -X POST -H 'Content-type: application/json' \
+              --data "{\"text\":\":x: Deploy *{{workflow.parameters.environment}}* of \`{{workflow.parameters.image-tag}}\` ${WORKFLOW_STATUS}: {{workflow.name}}\"}" \
+              "$(cat /etc/slack/url)"
+        env:
+          - name: WORKFLOW_STATUS
+            value: "{{workflow.status}}"
+        volumeMounts:
+          - name: slack-webhook
+            mountPath: /etc/slack
+            readOnly: true
+      volumes:
+        - name: slack-webhook
+          secret:
+            secretName: slack-webhook

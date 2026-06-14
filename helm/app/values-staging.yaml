@@ -1,0 +1,11 @@
+ingress:
+  host: staging.app.m-khamisi.com
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: staging.app.m-khamisi.com
+
+replicaCount: 1
+
+# Canary analysis (Layer 5) is a production-only concern — the AnalysisTemplate
+# lives in the "production" namespace. Staging gets a plain rolling Deployment.
+rollout:
+  enabled: false

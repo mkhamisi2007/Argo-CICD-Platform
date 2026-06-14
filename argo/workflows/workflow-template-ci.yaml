@@ -1,0 +1,160 @@
+apiVersion: argoproj.io/v1alpha1
+kind: WorkflowTemplate
+metadata:
+  name: ci-pipeline
+  namespace: argo
+spec:
+  serviceAccountName: argo-workflows
+  entrypoint: ci
+  arguments:
+    parameters:
+      - name: repo-url
+        # GitHub repo URL, e.g. https://github.com/org/argo-cicd-platform.git
+      - name: image-tag
+        # short git commit SHA
+      - name: ecr-repo
+        # full ECR repository URI, e.g. <account>.dkr.ecr.eu-west-3.amazonaws.com/argo-cicd-app
+
+  # Shared workspace for clone -> build -> test/scan -> push-ecr.
+  # NOTE: ReadWriteOnce is sufficient for a single-node default StorageClass (gp2/gp3).
+  # If DAG tasks land on different nodes, switch this to an EFS-backed ReadWriteMany
+  # StorageClass.
+  volumeClaimTemplates:
+    - metadata:
+        name: workdir
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 2Gi
+
+  templates:
+    - name: ci
+      dag:
+        tasks:
+          - name: clone
+            template: clone
+
+          - name: build
+            template: build
+            dependencies: [clone]
+
+          - name: test
+            template: test
+            dependencies: [build]
+
+          - name: scan
+            template: scan
+            dependencies: [build]
+
+          - name: push-ecr
+            template: push-ecr
+            dependencies: [test, scan]
+
+          - name: trigger-deploy
+            template: trigger-deploy
+            dependencies: [push-ecr]
+
+    # --- clone: git clone the repo into the shared workspace ---
+    - name: clone
+      container:
+        image: alpine/git:latest
+        command: ["sh", "-c"]
+        args:
+          - |
+            set -ex
+            rm -rf /workspace/src
+            git clone --depth 1 "{{workflow.parameters.repo-url}}" /workspace/src
+        volumeMounts:
+          - name: workdir
+            mountPath: /workspace
+
+    # --- build: Kaniko builds the image from app/Dockerfile and pushes it tagged
+    # with the commit SHA. Auth to ECR is via the pod's IRSA role (argo-workflows
+    # service account) - no docker credentials needed.
+    - name: build
+      container:
+        image: gcr.io/kaniko-project/executor:latest
+        args:
+          - --context=/workspace/src/app
+          - --dockerfile=/workspace/src/app/Dockerfile
+          - --destination={{workflow.parameters.ecr-repo}}:{{workflow.parameters.image-tag}}
+          - --cache=true
+          - --cache-repo={{workflow.parameters.ecr-repo}}
+        volumeMounts:
+          - name: workdir
+            mountPath: /workspace
+
+    # --- test: run pytest against the application source ---
+    - name: test
+      container:
+        image: python:3.11-slim
+        command: ["sh", "-c"]
+        args:
+          - |
+            set -ex
+            cd /workspace/src/app
+            pip install --no-cache-dir -r requirements-dev.txt
+            pytest -v
+        volumeMounts:
+          - name: workdir
+            mountPath: /workspace
+
+    # --- scan: Trivy scans the freshly pushed image; fails on CRITICAL findings.
+    # Trivy authenticates to ECR using the pod's IRSA role via the AWS SDK
+    # credential chain.
+    - name: scan
+      container:
+        image: aquasec/trivy:latest
+        command: ["sh", "-c"]
+        args:
+          - |
+            set -ex
+            trivy image \
+              --exit-code 1 \
+              --severity CRITICAL \
+              --ignore-unfixed \
+              "{{workflow.parameters.ecr-repo}}:{{workflow.parameters.image-tag}}"
+
+    # --- push-ecr: re-run Kaniko (cache hit, near-instant) to additionally tag the
+    # image "latest" now that test + scan have passed.
+    - name: push-ecr
+      container:
+        image: gcr.io/kaniko-project/executor:latest
+        args:
+          - --context=/workspace/src/app
+          - --dockerfile=/workspace/src/app/Dockerfile
+          - --destination={{workflow.parameters.ecr-repo}}:{{workflow.parameters.image-tag}}
+          - --destination={{workflow.parameters.ecr-repo}}:latest
+          - --cache=true
+          - --cache-repo={{workflow.parameters.ecr-repo}}
+        volumeMounts:
+          - name: workdir
+            mountPath: /workspace
+
+    # --- trigger-deploy: create a deploy Workflow targeting staging first ---
+    - name: trigger-deploy
+      resource:
+        action: create
+        manifest: |
+          apiVersion: argoproj.io/v1alpha1
+          kind: Workflow
+          metadata:
+            generateName: deploy-staging-
+            namespace: argo
+          spec:
+            serviceAccountName: argo-workflows
+            workflowTemplateRef:
+              name: deploy-pipeline
+            arguments:
+              parameters:
+                - name: image-tag
+                  value: "{{workflow.parameters.image-tag}}"
+                - name: environment
+                  value: staging
+                - name: repo-url
+                  value: "{{workflow.parameters.repo-url}}"
+                - name: ecr-repo
+                  value: "{{workflow.parameters.ecr-repo}}"
+                - name: app-namespace
+                  value: staging

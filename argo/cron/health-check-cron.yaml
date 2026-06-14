@@ -1,0 +1,78 @@
+# Runs every 30 minutes against the public production endpoint. Posts to Slack if
+# the app is unhealthy or p99 latency exceeds 500ms.
+apiVersion: argoproj.io/v1alpha1
+kind: CronWorkflow
+metadata:
+  name: health-check
+  namespace: argo
+spec:
+  schedule: "*/30 * * * *"
+  concurrencyPolicy: Replace
+  startingDeadlineSeconds: 300
+  workflowSpec:
+    serviceAccountName: argo-workflows
+    entrypoint: health-check
+    onExit: notify-slack
+    arguments:
+      parameters:
+        - name: app-url
+          value: "https://app.m-khamisi.com"
+
+    templates:
+      - name: health-check
+        steps:
+          - - name: check-health
+              template: check-health
+          - - name: check-latency
+              template: check-latency
+
+      # --- check-health: expect HTTP 200 from /health ---
+      - name: check-health
+        container:
+          image: curlimages/curl:8.7.1
+          command: ["sh", "-c"]
+          args:
+            - |
+              set -ex
+              curl -fsS -o /dev/null -w '%{http_code}\n' "{{workflow.parameters.app-url}}/health" | grep -q '^200$'
+
+      # --- check-latency: expect total response time under 500ms ---
+      - name: check-latency
+        container:
+          image: curlimages/curl:8.7.1
+          command: ["sh", "-c"]
+          args:
+            - |
+              set -ex
+              time_total=$(curl -fsS -o /dev/null -w '%{time_total}' "{{workflow.parameters.app-url}}/health")
+              echo "response time: ${time_total}s"
+              awk -v t="$time_total" 'BEGIN { exit !(t < 0.5) }'
+
+      # --- notify-slack: exit handler, posts only on failure ---
+      - name: notify-slack
+        steps:
+          - - name: notify
+              template: slack-message
+              when: "{{workflow.status}} != Succeeded"
+
+      - name: slack-message
+        container:
+          image: curlimages/curl:8.7.1
+          command: ["sh", "-c"]
+          args:
+            - |
+              set -ex
+              curl -fsS -X POST -H 'Content-type: application/json' \
+                --data "{\"text\":\":rotating_light: Health check ${WORKFLOW_STATUS} for {{workflow.parameters.app-url}}\"}" \
+                "$(cat /etc/slack/url)"
+          env:
+            - name: WORKFLOW_STATUS
+              value: "{{workflow.status}}"
+          volumeMounts:
+            - name: slack-webhook
+              mountPath: /etc/slack
+              readOnly: true
+        volumes:
+          - name: slack-webhook
+            secret:
+              secretName: slack-webhook
