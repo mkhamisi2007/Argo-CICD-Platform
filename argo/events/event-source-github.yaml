@@ -20,7 +20,6 @@ spec:
         - owner: mkhamisi2007
           names:
             - Argo-CICD-Platform
-      organizations: []
       webhook:
         endpoint: /push
         port: "12000"
