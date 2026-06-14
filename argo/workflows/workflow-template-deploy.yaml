@@ -60,12 +60,16 @@ spec:
         args:
           - |
             set -ex
+            # No --wait: Helm's generic CRD-readiness check looks for a "Ready"
+            # condition that the Argo Rollout CRD never sets (it uses
+            # Healthy/Available/Progressing instead), so --wait would just
+            # block until --timeout regardless of actual rollout status.
+            # smoke-test below provides the readiness gate instead.
             helm upgrade --install "{{workflow.parameters.release-name}}" /src/helm/app \
               --namespace "{{workflow.parameters.app-namespace}}" --create-namespace \
               -f "/src/helm/app/values-{{workflow.parameters.environment}}.yaml" \
               --set image.repository="{{workflow.parameters.ecr-repo}}" \
-              --set image.tag="{{workflow.parameters.image-tag}}" \
-              --wait --timeout 5m
+              --set image.tag="{{workflow.parameters.image-tag}}"
         volumeMounts:
           - name: src
             mountPath: /src
