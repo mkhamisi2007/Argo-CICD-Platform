@@ -139,6 +139,11 @@ resource "aws_eks_node_group" "default" {
     aws_iam_role_policy_attachment.node_cni_policy,
     aws_iam_role_policy_attachment.node_ecr_readonly,
   ]
+
+  # Cluster Autoscaler manages desired_size at runtime; don't fight it on apply.
+  lifecycle {
+    ignore_changes = [scaling_config[0].desired_size]
+  }
 }
 
 # --- Core add-ons ---
