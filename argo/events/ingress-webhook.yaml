@@ -22,7 +22,7 @@ metadata:
     # event-source-github.yaml's webhook URL use https://.
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
     alb.ingress.kubernetes.io/ssl-redirect: "443"
-    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:us-east-1:277707094115:certificate/527dda5d-4598-42e2-988f-a2b70b297664
+    alb.ingress.kubernetes.io/certificate-arn: <ACM_CERTIFICATE_ARN>
     # The EventSource webhook server only registers /push; point the ALB health
     # check at it and accept its response codes for non-GitHub requests too.
     alb.ingress.kubernetes.io/healthcheck-path: /push
