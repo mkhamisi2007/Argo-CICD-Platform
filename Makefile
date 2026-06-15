@@ -22,7 +22,7 @@ NAME ?=
 	fill-placeholders fill-slack-secret \
 	kubeconfig bootstrap github-secret \
 	apply-workflows apply-events apply-rollouts apply-cron apply-argo \
-	approve-staging stop-staging watch-canary \
+	approve-staging stop-staging watch-canary rollback-production \
 	helm-lint helm-template-staging helm-template-production \
 	test teardown clean
 
@@ -44,6 +44,7 @@ help: ## Show this help and the recommended run order
 	@echo "  make approve-staging NAME=deploy-staging-xxxxx   (promote a specific build instead)"
 	@echo "  make stop-staging NAME=deploy-staging-xxxxx      (discard one stale suspended approval manually)"
 	@echo "  make watch-canary                                (watch the production canary rollout)"
+	@echo "  make rollback-production                         (abort canary + roll back to previous stable)"
 	@echo ""
 	@echo "Teardown:"
 	@echo "  make teardown"
@@ -174,6 +175,12 @@ stop-staging: ## Stop a stale suspended deploy-staging workflow (NAME=deploy-sta
 
 watch-canary: ## Watch the production canary rollout
 	kubectl argo rollouts get rollout argo-cicd-app -n production --watch
+
+rollback-production: ## Abort the current canary and roll back production to the previous stable version
+	kubectl argo rollouts abort argo-cicd-app -n production
+	kubectl argo rollouts undo argo-cicd-app -n production
+	@echo ""
+	@echo "==> Next: make watch-canary"
 
 ## --- Verification --------------------------------------------------------------
 

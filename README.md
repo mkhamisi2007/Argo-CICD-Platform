@@ -276,6 +276,7 @@ posts to Slack via the notification subscription in
 ```bash
 kubectl argo rollouts abort argo-cicd-app -n production
 kubectl argo rollouts undo argo-cicd-app -n production
+# or: make rollback-production
 ```
 
 ## Troubleshooting
