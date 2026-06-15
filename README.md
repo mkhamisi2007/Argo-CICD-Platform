@@ -84,6 +84,26 @@ flowchart TB
     CA["Cluster Autoscaler"]:::k8s -.->|scales| Nodes[("EC2 node group<br/>t3.medium, 2-5")]:::aws
 ```
 
+## EKS add-ons
+
+In addition to the Argo ecosystem (Workflows/Events/Rollouts) and the
+kube-prometheus-stack, the cluster runs the following add-ons:
+
+| Add-on | Installed via | Purpose |
+| --- | --- | --- |
+| **VPC CNI**, **kube-proxy**, **CoreDNS** | `aws_eks_addon` (`terraform/modules/eks`) | Default EKS networking/DNS add-ons, managed by EKS. |
+| **Amazon EBS CSI Driver** | `aws_eks_addon` (`terraform/storage.tf`) + IRSA | Provisions EBS volumes for `PersistentVolumeClaim`s (e.g. Prometheus/Alertmanager storage). |
+| **AWS Load Balancer Controller** | `helm_release` (`terraform/alb.tf`) + IRSA | Turns `Ingress`/`Service` objects into ALBs/target groups — provisions the shared ALB for the app, staging, webhook and Grafana ingresses. |
+| **ExternalDNS** | `helm_release` (`terraform/route53.tf`) + IRSA | Watches Ingresses and creates/updates Route 53 records (`app.`, `staging.app.`, `grafana.app.<domain>`, etc.) pointing at the ALB. |
+| **Cluster Autoscaler** | `helm_release` (`terraform/autoscaler.tf`) + IRSA | Scales the managed node group's ASG (2-5 `t3.medium`) up/down based on pending pods. |
+| **yet-another-cloudwatch-exporter (YACE)** | `helm_release` (`terraform/cloudwatch-exporter.tf`) + IRSA | Polls CloudWatch (`AWS/WAFV2 BlockedRequests` for the `argo-cicd-cluster-waf` Web ACL) and exposes it to Prometheus for the "WAF Blocked Requests" Grafana panel. |
+
+Each `helm_release` add-on uses **IRSA** (IAM Roles for Service Accounts): a
+per-add-on IAM role, trusted via the cluster's OIDC provider and scoped to a single
+`system:serviceaccount:<namespace>:<name>`, is defined in
+`terraform/modules/security/irsa.tf` and attached to the Helm-managed service account
+via the `eks.amazonaws.com/role-arn` annotation.
+
 ## Prerequisites
 
 - [AWS CLI](https://docs.aws.amazon.com/cli/) v2, configured with credentials that can
