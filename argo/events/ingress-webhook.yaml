@@ -13,7 +13,6 @@ metadata:
   name: github-webhook-ingress
   namespace: argo-events
   annotations:
-    kubernetes.io/ingress.class: alb
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip
     alb.ingress.kubernetes.io/group.name: argo-cicd-platform
@@ -30,6 +29,7 @@ metadata:
     alb.ingress.kubernetes.io/success-codes: "200-499"
     external-dns.alpha.kubernetes.io/hostname: webhook.app.m-khamisi.com
 spec:
+  ingressClassName: alb
   rules:
     - host: webhook.app.m-khamisi.com
       http:

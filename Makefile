@@ -47,18 +47,26 @@ help: ## Show this help and the recommended run order
 
 tf-init: ## terraform init (no remote backend configured)
 	cd $(TF_DIR) && terraform init -backend=false
+	@echo ""
+	@echo "==> Next: make tf-validate"
 
 tf-fmt: ## terraform fmt -recursive
 	cd $(TF_DIR) && terraform fmt -recursive
 
 tf-validate: tf-fmt ## terraform fmt + validate
 	cd $(TF_DIR) && terraform validate
+	@echo ""
+	@echo "==> Next: make tf-apply"
 
 tf-plan: ## terraform plan
 	cd $(TF_DIR) && terraform plan
 
 tf-apply: ## terraform apply (run twice: once for infra, again after apply-argo for WAF<->ALB)
 	cd $(TF_DIR) && terraform apply
+	@echo ""
+	@echo "==> Next: make fill-placeholders   (first apply)"
+	@echo "    -- or, if this was the second pass after 'make apply-argo', setup"
+	@echo "       is complete: git push origin main to trigger a deploy."
 
 tf-output: ## Print all terraform outputs
 	cd $(TF_DIR) && terraform output
@@ -89,12 +97,16 @@ fill-placeholders: ## Replace <ECR_URI>/<ECR_REPO_URI>/<ARGO_WORKFLOWS_ECR_ROLE_
 		argo/events/ingress-webhook.yaml && \
 	find . -name '*.bak' -delete
 	@echo "==> Placeholders filled."
+	@echo ""
+	@echo "==> Next: make kubeconfig"
 
 fill-slack-secret: ## Replace <SLACK_WEBHOOK_URL> in argo/rollouts/analysis-template.yaml
 	@test -n "$(SLACK_WEBHOOK_URL)" || (echo "SLACK_WEBHOOK_URL is required, e.g. make fill-slack-secret SLACK_WEBHOOK_URL=https://hooks.slack.com/services/..." && exit 1)
 	sed -i.bak "s#<SLACK_WEBHOOK_URL>#$(SLACK_WEBHOOK_URL)#g" argo/rollouts/analysis-template.yaml
 	find . -name '*.bak' -delete
 	@echo "==> Slack webhook filled in argo/rollouts/analysis-template.yaml."
+	@echo ""
+	@echo "==> Next: make github-secret GITHUB_PAT=... GITHUB_WEBHOOK_SECRET=..."
 
 ## --- Cluster bootstrap -------------------------------------------------------
 
@@ -103,10 +115,14 @@ kubeconfig: ## aws eks update-kubeconfig (cluster name/region from terraform out
 	CLUSTER=$$(terraform output -raw cluster_name) && \
 	REGION=$$(terraform output -raw aws_region) && \
 	aws eks update-kubeconfig --name "$$CLUSTER" --region "$$REGION"
+	@echo ""
+	@echo "==> Next: make bootstrap SLACK_WEBHOOK_URL=..."
 
 bootstrap: ## Install Argo Workflows/Events/Rollouts + kube-prometheus-stack (scripts/bootstrap.sh)
 	@test -n "$(SLACK_WEBHOOK_URL)" || (echo "SLACK_WEBHOOK_URL is required, e.g. make bootstrap SLACK_WEBHOOK_URL=https://hooks.slack.com/services/..." && exit 1)
 	SLACK_WEBHOOK_URL="$(SLACK_WEBHOOK_URL)" ./scripts/bootstrap.sh
+	@echo ""
+	@echo "==> Next: make fill-slack-secret SLACK_WEBHOOK_URL=..."
 
 github-secret: ## Create the github-access Secret (GitHub PAT + webhook shared secret)
 	@test -n "$(GITHUB_PAT)" || (echo "GITHUB_PAT is required" && exit 1)
@@ -115,6 +131,8 @@ github-secret: ## Create the github-access Secret (GitHub PAT + webhook shared s
 		--from-literal=token="$(GITHUB_PAT)" \
 		--from-literal=secret="$(GITHUB_WEBHOOK_SECRET)" \
 		--dry-run=client -o yaml | kubectl apply -f -
+	@echo ""
+	@echo "==> Next: make apply-argo"
 
 ## --- Argo manifests ----------------------------------------------------------
 
@@ -131,6 +149,8 @@ apply-cron: ## kubectl apply -f argo/cron/
 	kubectl apply -f argo/cron/
 
 apply-argo: apply-workflows apply-events apply-rollouts apply-cron ## Apply all argo/ manifests
+	@echo ""
+	@echo "==> Next: make tf-apply   (second pass: associates WAF with the new ALB)"
 
 ## --- Verification --------------------------------------------------------------
 

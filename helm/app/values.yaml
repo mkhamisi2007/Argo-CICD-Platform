@@ -15,7 +15,6 @@ ingress:
   # Ingress objects don't collide when sharing one ALB via group.name below.
   host: app.m-khamisi.com
   annotations:
-    kubernetes.io/ingress.class: alb
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip
     # Without this, the controller defaults this Ingress's listen-ports to

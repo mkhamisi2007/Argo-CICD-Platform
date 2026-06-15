@@ -9,6 +9,7 @@ metadata:
   annotations:
     {{- toYaml .Values.ingress.annotations | nindent 4 }}
 spec:
+  ingressClassName: alb
   rules:
     - host: {{ .Values.ingress.host }}
       http:
