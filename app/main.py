@@ -4,7 +4,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
 from prometheus_fastapi_instrumentator import Instrumentator
 
-APP_VERSION = os.getenv("APP_VERSION", "0.1.0")
+APP_VERSION = os.getenv("APP_VERSION", "0.1.0") 
 
 app = FastAPI(title="argo-cicd-app")
 
