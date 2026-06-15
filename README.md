@@ -248,7 +248,11 @@ argo resume -n argo <deploy-staging-xxxxx>
 ```
 
 Resuming runs `trigger-production`, which submits a new `deploy-pipeline` Workflow
-with `environment: production`.
+with `environment: production`. Watch the resulting canary rollout:
+
+```bash
+kubectl argo rollouts get rollout argo-cicd-app -n production --watch
+```
 
 > If multiple `deploy-staging-*` workflows pile up suspended at `approve-production`
 > (e.g. several pushes landed before you approved), only resume the one with the
