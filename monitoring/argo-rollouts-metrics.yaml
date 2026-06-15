@@ -1,0 +1,43 @@
+# Exposes the Argo Rollouts controller's Prometheus metrics (container port 8090),
+# which include rollout_canary_weight/rollout_info - used by the "Active Canary
+# Weight" panel in grafana-dashboard.json and the RolloutFailed alert in
+# prometheus-values.yaml. scripts/bootstrap.sh installs the argo-rollouts chart
+# without a metrics Service, so both objects below are created manually.
+apiVersion: v1
+kind: Service
+metadata:
+  name: argo-rollouts-metrics
+  namespace: argo-rollouts
+  labels:
+    app.kubernetes.io/name: argo-rollouts
+    app.kubernetes.io/component: rollouts-controller-metrics
+spec:
+  selector:
+    app.kubernetes.io/name: argo-rollouts
+    app.kubernetes.io/component: rollouts-controller
+  ports:
+    - name: metrics
+      port: 8090
+      targetPort: metrics
+---
+# serviceMonitorSelectorNilUsesHelmValues: false in prometheus-values.yaml makes
+# Prometheus select all ServiceMonitors in its own namespace (monitoring), so this
+# doesn't need a "release: prometheus-stack" label - see additionalServiceMonitors
+# in prometheus-values.yaml for the equivalent helm-managed pattern.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: argo-rollouts
+  namespace: monitoring
+spec:
+  jobLabel: app.kubernetes.io/name
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: rollouts-controller-metrics
+  namespaceSelector:
+    matchNames:
+      - argo-rollouts
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s

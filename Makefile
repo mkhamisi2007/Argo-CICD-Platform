@@ -22,7 +22,7 @@ NAME ?=
 	fill-placeholders fill-slack-secret \
 	kubeconfig bootstrap github-secret \
 	apply-workflows apply-events apply-rollouts apply-cron apply-argo \
-	apply-grafana-dashboard \
+	apply-grafana-dashboard apply-monitoring-metrics \
 	approve-staging stop-staging watch-canary rollback-production \
 	helm-lint helm-template-staging helm-template-production \
 	test teardown clean
@@ -165,6 +165,9 @@ apply-argo: apply-workflows apply-events apply-rollouts apply-cron ## Apply all 
 	@echo "==> Next: make tf-apply   (second pass: associates WAF with the new ALB)"
 
 ## --- Monitoring ----------------------------------------------------------------
+
+apply-monitoring-metrics: ## Apply ServiceMonitors for Argo Rollouts (Canary Weight panel) + Cluster Autoscaler (Node Count panel)
+	kubectl apply -f monitoring/argo-rollouts-metrics.yaml -f monitoring/cluster-autoscaler-servicemonitor.yaml
 
 apply-grafana-dashboard: ## Load monitoring/grafana-dashboard.json into Grafana via a labeled ConfigMap (auto-loaded by the dashboard sidecar)
 	kubectl create configmap argo-cicd-app-dashboard -n monitoring \

@@ -35,7 +35,7 @@
       },
       "targets": [
         {
-          "expr": "100 * sum(rate(http_requests_total{job=\"argo-cicd-app\", status=~\"5..\"}[5m])) / sum(rate(http_requests_total{job=\"argo-cicd-app\"}[5m]))",
+          "expr": "100 * (sum(rate(http_requests_total{job=\"argo-cicd-app\", status=~\"5..\"}[5m])) or vector(0)) / sum(rate(http_requests_total{job=\"argo-cicd-app\"}[5m]))",
           "legendFormat": "error %",
           "refId": "A"
         }
@@ -60,17 +60,17 @@
     },
     {
       "id": 4,
-      "title": "Active Canary Weight (%)",
+      "title": "Rollout Phase",
       "type": "timeseries",
       "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "fieldConfig": {
-        "defaults": { "unit": "percent", "max": 100, "min": 0 }
+        "defaults": { "max": 1, "min": 0 }
       },
       "targets": [
         {
-          "expr": "rollout_canary_weight{name=\"argo-cicd-app\", namespace=\"production\"}",
-          "legendFormat": "canary weight",
+          "expr": "rollout_phase{exported_namespace=\"production\", name=\"argo-cicd-app\"}",
+          "legendFormat": "{{phase}}",
           "refId": "A"
         }
       ]
@@ -83,7 +83,7 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "sum(cluster_autoscaler_nodes_count)",
+          "expr": "sum(cluster_autoscaler_nodes_count{state=\"ready\"})",
           "legendFormat": "nodes",
           "refId": "A"
         }
