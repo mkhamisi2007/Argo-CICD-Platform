@@ -6,61 +6,82 @@ an ALB protected by AWS WAF, with DNS automation and Prometheus/Grafana monitori
 
 ## Architecture
 
+The platform is shown below as three focused diagrams: the **CI/CD pipeline** (how a
+commit becomes a running canary), **traffic & networking** (how requests reach the
+app), and **observability, notifications & autoscaling**.
+
+### CI/CD pipeline
+
 ```mermaid
-flowchart LR
-    Dev[Developer] -->|git push main| GitHub
+flowchart TB
+    classDef ext fill:#e5e7eb,stroke:#9ca3af,color:#111827
+    classDef argo fill:#7b42bc,stroke:#4b2a7a,color:#ffffff
+    classDef aws fill:#ff9900,stroke:#b36b00,color:#111827
 
-    subgraph EKS["EKS Cluster (private subnets)"]
-        subgraph ArgoEvents["argo-events"]
-            ES[EventSource: github]
-            SE[Sensor: github]
-        end
+    Dev(["Developer"]):::ext -->|git push main| GH[("GitHub repo")]:::ext
+    GH -->|push webhook| Sensor["Argo Events<br/>EventSource + Sensor"]:::argo
+    Sensor -->|"submit Workflow<br/>image-tag = git SHA"| CI["ci-pipeline<br/>clone -> build -> test/scan -> push"]:::argo
+    CI -->|kaniko build & push| ECR[("Amazon ECR")]:::aws
+    CI -->|trigger-deploy| DeployS["deploy-pipeline<br/>environment: staging"]:::argo
+    DeployS -->|helm upgrade --install| RolloutS["Argo Rollout<br/>staging"]:::argo
+    RolloutS -->|smoke-test passes| Approve{{"Manual approval"}}:::ext
+    Approve -->|"integration-test,<br/>trigger-production"| DeployP["deploy-pipeline<br/>environment: production"]:::argo
+    DeployP -->|helm upgrade --install| RolloutP["Argo Rollout<br/>production - canary<br/>10% -> 50% -> 100%"]:::argo
+```
 
-        subgraph Argo["argo"]
-            CI[WorkflowTemplate: ci-pipeline]
-            Deploy[WorkflowTemplate: deploy-pipeline]
-            Cron[CronWorkflow: health-check]
-        end
+### Traffic & networking
 
-        subgraph Prod["production / staging"]
-            Rollout[Argo Rollout: argo-cicd-app]
-            Stable[app-stable-svc]
-            Canary[app-canary-svc]
-            Ingress[app-ingress]
-        end
+Production, staging, and the GitHub webhook all share **one ALB** via a single
+`IngressGroup` (`alb.ingress.kubernetes.io/group.name: argo-cicd-platform`), with
+host-based routing rules for each.
 
-        subgraph KubeSystem["kube-system"]
-            ALBC[AWS LB Controller]
-            EDNS[ExternalDNS]
-            CA[Cluster Autoscaler]
-        end
+```mermaid
+flowchart TB
+    classDef ext fill:#e5e7eb,stroke:#9ca3af,color:#111827
+    classDef argo fill:#7b42bc,stroke:#4b2a7a,color:#ffffff
+    classDef aws fill:#ff9900,stroke:#b36b00,color:#111827
+    classDef k8s fill:#326ce5,stroke:#1a3e8c,color:#ffffff
 
-        subgraph Monitoring["monitoring"]
-            Prom[Prometheus]
-            Graf[Grafana]
-            AM[Alertmanager]
-        end
-    end
+    Users(["End users"]):::ext -->|HTTPS| WAF["AWS WAF"]:::aws
+    WAF --> ALB["Application Load Balancer<br/>(shared IngressGroup)"]:::aws
 
-    GitHub -->|webhook push| ES --> SE -->|submit Workflow| CI
-    CI -->|kaniko build/push| ECR[(ECR: argo-cicd-app)]
-    CI -->|trivy scan + pytest| CI
-    CI -->|submit Workflow| Deploy
-    Deploy -->|helm upgrade --install| Rollout
-    Rollout --> Stable & Canary
-    Stable & Canary --> Ingress
-    Ingress -->|creates/updates| ALB[ALB]
-    ALBC -.manages.-> ALB
-    EDNS -.manages.-> R53[(Route 53)]
-    ALB --> R53
-    WAF[AWS WAF] -.associated with.-> ALB
-    Users[End users] -->|HTTPS| WAF
-    Cron -->|curl /health, /metrics| ALB
-    Prom -->|scrape /metrics, rollout metrics| Rollout
-    Prom --> AM -->|alerts| Slack[Slack]
-    Deploy -->|notify on failure| Slack
-    Rollout -->|notify on rollback| Slack
-    CA -.scales.-> Nodes[EC2 node group]
+    ALB -->|production host| IngProd["production/app-ingress"]:::k8s
+    ALB -->|staging host| IngStaging["staging/app-ingress"]:::k8s
+    ALB -->|"webhook host, /push"| IngHook["argo-events/github-webhook-ingress"]:::k8s
+
+    IngProd --> SvcStable["app-stable-svc"]:::k8s
+    IngProd --> SvcCanary["app-canary-svc"]:::k8s
+    IngStaging --> SvcStagingStable["app-stable-svc"]:::k8s
+    IngHook --> EventSourceSvc["github-eventsource-svc"]:::argo
+
+    R53[("Route 53")]:::aws
+    EDNS["ExternalDNS"]:::k8s -.->|manages records| R53
+    ALBC["AWS LB Controller"]:::k8s -.->|manages| ALB
+    R53 -.->|DNS resolution| ALB
+```
+
+### Observability, notifications & autoscaling
+
+```mermaid
+flowchart TB
+    classDef ext fill:#e5e7eb,stroke:#9ca3af,color:#111827
+    classDef argo fill:#7b42bc,stroke:#4b2a7a,color:#ffffff
+    classDef aws fill:#ff9900,stroke:#b36b00,color:#111827
+    classDef k8s fill:#326ce5,stroke:#1a3e8c,color:#ffffff
+
+    App["argo-cicd-app pods<br/>/metrics"]:::k8s --> Prom["Prometheus"]:::k8s
+    RolloutCtrl["Argo Rollouts controller<br/>metrics"]:::argo --> Prom
+    Prom --> Graf["Grafana dashboards"]:::k8s
+    Prom --> AM["Alertmanager"]:::k8s
+    AM -->|"HighErrorRate, HighLatency,<br/>RolloutFailed"| Slack(["Slack"]):::ext
+
+    Cron["CronWorkflow<br/>health-check (every 30m)"]:::argo -->|"curl /health, /metrics"| ALB["ALB"]:::aws
+    Cron -->|on failure| Slack
+
+    Deploy["deploy-pipeline"]:::argo -->|"onExit: notify on failure"| Slack
+    Analysis["AnalysisRun: success-rate<br/>(canary rollback)"]:::argo -->|"on abort/rollback"| Slack
+
+    CA["Cluster Autoscaler"]:::k8s -.->|scales| Nodes[("EC2 node group<br/>t3.medium, 2-5")]:::aws
 ```
 
 ## Prerequisites
