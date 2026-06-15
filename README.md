@@ -293,6 +293,23 @@ Panels 1-3 are the app's golden signals (traffic, errors, latency), panel 4 show
 what a canary deploy is doing right now, and panels 5-6 give cluster/infra context
 (autoscaling and WAF activity).
 
+## Slack notifications
+
+All notifications post to the single incoming webhook configured via
+`SLACK_WEBHOOK_URL` (`make bootstrap` / `make fill-slack-secret` /
+`monitoring/prometheus-values.yaml`'s Alertmanager receiver). You'll get a message
+when:
+
+| When | Source |
+| --- | --- |
+| A **staging deploy** passes its smoke test and is ready for approval | `deploy-pipeline`'s `notify-staging-ready` step (`argo/workflows/workflow-template-deploy.yaml`) |
+| A **production canary deploy** starts, and again once `deploy-pipeline` finishes (canary then rolls out on its own) | `notify-production-start` / `notify-production-deployed` steps, same workflow |
+| Any **deploy-pipeline run fails** (build, test, scan, deploy, smoke test, etc.) | `notify-slack` `onExit` handler, same workflow |
+| The **production canary completes** or is **aborted** (auto-rollback from a failed analysis, or `make rollback-production`) | Argo Rollouts notifications (`argo/rollouts/rollout-production.yaml` annotations + `argo-rollouts-notification-configuration` ConfigMap in `argo/rollouts/analysis-template.yaml`) |
+| Someone runs **`make rollback-production`** manually | Direct `curl` to the webhook in the Makefile target |
+| The **health-check CronWorkflow** (every 30 min) finds `/health` unhealthy or p99 latency over 500ms | `notify-slack` `onExit` handler in `argo/cron/health-check-cron.yaml` (posts only on failure) |
+| Prometheus alerts fire: **HighErrorRate** (>5% 5xx for 2m), **HighLatency** (p99 > 500ms for 2m), or **RolloutFailed** (Rollout phase `Degraded`) | Alertmanager's `slack` receiver (`monitoring/prometheus-values.yaml`) |
+
 ## Manually approving staging → production
 
 `deploy-pipeline` suspends after the staging smoke test + integration test. List
