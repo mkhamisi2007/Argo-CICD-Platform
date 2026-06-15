@@ -237,6 +237,23 @@ Or open the Argo Rollouts dashboard:
 kubectl argo rollouts dashboard -n argo-rollouts
 ```
 
+## Monitoring (Grafana)
+
+Grafana is exposed on the shared ALB IngressGroup at `https://grafana.app.m-khamisi.com`
+(`monitoring/prometheus-values.yaml`'s `grafana.ingress`, applied via
+`helm upgrade --install prometheus-stack ...`). ExternalDNS creates the DNS record
+automatically; the ACM certificate's `*.app.m-khamisi.com` SAN covers it.
+
+```bash
+open https://grafana.app.m-khamisi.com
+```
+
+Username is `admin`; get the auto-generated password with:
+
+```bash
+kubectl get secret -n monitoring prometheus-stack-grafana -o jsonpath='{.data.admin-password}' | base64 -d; echo
+```
+
 ## Manually approving staging → production
 
 `deploy-pipeline` suspends after the staging smoke test + integration test. List

@@ -87,6 +87,24 @@ alertmanager:
 grafana:
   enabled: true
   defaultDashboardsEnabled: true
+  # Exposes Grafana on the shared ALB IngressGroup (same one used by
+  # helm/app/templates/ingress.yaml and argo/events/ingress-webhook.yaml), with
+  # ExternalDNS creating grafana.app.m-khamisi.com pointing at it. Covered by the
+  # *.app.m-khamisi.com SAN on the existing ACM certificate (terraform/acm.tf).
+  ingress:
+    enabled: true
+    ingressClassName: alb
+    annotations:
+      alb.ingress.kubernetes.io/scheme: internet-facing
+      alb.ingress.kubernetes.io/target-type: ip
+      alb.ingress.kubernetes.io/group.name: argo-cicd-platform
+      alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+      alb.ingress.kubernetes.io/ssl-redirect: "443"
+      alb.ingress.kubernetes.io/certificate-arn: <ACM_CERTIFICATE_ARN>
+      external-dns.alpha.kubernetes.io/hostname: grafana.app.m-khamisi.com
+    hosts:
+      - grafana.app.m-khamisi.com
+    path: /
 
 # NOTE: the "WAF Blocked Requests" panel in grafana-dashboard.json reads
 # aws_wafv2_blocked_requests_sum, which comes from a separate

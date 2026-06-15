@@ -104,7 +104,8 @@ fill-placeholders: ## Replace <ECR_URI>/<ECR_REPO_URI>/<ARGO_WORKFLOWS_ECR_ROLE_
 	sed -i.bak "s#<ARGO_WORKFLOWS_ECR_ROLE_ARN>#$$ROLE_ARN#g" \
 		argo/workflows/serviceaccount.yaml && \
 	sed -i.bak "s#<ACM_CERTIFICATE_ARN>#$$CERT_ARN#g" \
-		argo/events/ingress-webhook.yaml && \
+		argo/events/ingress-webhook.yaml \
+		monitoring/prometheus-values.yaml && \
 	find . -name '*.bak' -delete
 	@echo "==> Placeholders filled."
 	@echo ""
