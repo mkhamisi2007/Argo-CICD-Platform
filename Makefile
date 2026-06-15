@@ -40,7 +40,8 @@ help: ## Show this help and the recommended run order
 	@echo "  10. make tf-apply   (second pass: associates WAF with the new ALB)"
 	@echo ""
 	@echo "Operations:"
-	@echo "  make approve-staging NAME=deploy-staging-xxxxx   (promote to production, stop other stale approvals)"
+	@echo "  make approve-staging                             (promote the latest suspended staging build, stop other stale approvals)"
+	@echo "  make approve-staging NAME=deploy-staging-xxxxx   (promote a specific build instead)"
 	@echo "  make stop-staging NAME=deploy-staging-xxxxx      (discard one stale suspended approval manually)"
 	@echo "  make watch-canary                                (watch the production canary rollout)"
 	@echo ""
@@ -162,8 +163,7 @@ apply-argo: apply-workflows apply-events apply-rollouts apply-cron ## Apply all 
 
 ## --- Operations ----------------------------------------------------------------
 
-approve-staging: ## Resume NAME=deploy-staging-xxxxx for production, stopping any other stale suspended deploy-staging-* workflows
-	@test -n "$(NAME)" || (echo "NAME is required, e.g. make approve-staging NAME=deploy-staging-xxxxx (see: argo list -n argo)" && exit 1)
+approve-staging: ## Resume the latest suspended deploy-staging workflow for production (or NAME=deploy-staging-xxxxx), stopping any other stale ones
 	./scripts/approve-staging.sh $(NAME)
 	@echo ""
 	@echo "==> Next: make watch-canary"

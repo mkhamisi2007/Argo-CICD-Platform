@@ -245,6 +245,7 @@ suspended workflows and resume the one for your build:
 ```bash
 argo list -n argo
 argo resume -n argo <deploy-staging-xxxxx>
+# or: make approve-staging                       (auto-picks the latest suspended build)
 # or: make approve-staging NAME=<deploy-staging-xxxxx>
 ```
 
@@ -260,9 +261,11 @@ kubectl argo rollouts get rollout argo-cicd-app -n production --watch
 > (e.g. several pushes landed before you approved), only resume the one with the
 > `image-tag` you want in production and stop the rest — otherwise each resumed
 > workflow will independently trigger its own production deploy.
-> `make approve-staging NAME=<deploy-staging-xxxxx>` does both in one step: it
-> resumes the named workflow and stops any other `deploy-staging-*` workflows still
-> suspended at `approve-production`.
+> `make approve-staging` does both in one step: with no `NAME`, it resumes the
+> most recently created suspended `deploy-staging-*` workflow; with
+> `NAME=<deploy-staging-xxxxx>`, it resumes that one instead. Either way, it then
+> stops any other `deploy-staging-*` workflows still suspended at
+> `approve-production`.
 
 ## Forcing a rollback
 

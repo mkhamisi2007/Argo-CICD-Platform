@@ -1,15 +1,51 @@
 #!/usr/bin/env bash
-# Resumes the given deploy-staging-xxxxx workflow (promoting its build to
-# production via trigger-production), then stops any *other*
-# deploy-staging-* workflows still suspended at approve-production - so a
-# pile-up of approvals from earlier pushes doesn't each independently kick
-# off their own production deploy.
+# Resumes a deploy-staging-xxxxx workflow (promoting its build to production via
+# trigger-production), then stops any *other* deploy-staging-* workflows still
+# suspended at approve-production - so a pile-up of approvals from earlier pushes
+# doesn't each independently kick off their own production deploy.
+#
+# Usage: approve-staging.sh [deploy-staging-xxxxx]
+# If no name is given, auto-selects the most recently created deploy-staging-*
+# workflow that is currently suspended at approve-production.
 set -euo pipefail
 
 NAME="${1:-}"
+
 if [[ -z "${NAME}" ]]; then
-  echo "Usage: $0 <deploy-staging-xxxxx>  (see: argo list -n argo)" >&2
-  exit 1
+  NAME=$(python3 - <<'EOF'
+import json, subprocess, sys
+
+names = subprocess.run(
+    ["argo", "list", "-n", "argo", "-o", "name"],
+    capture_output=True, text=True, check=True,
+).stdout.split()
+
+candidates = []
+for wf in names:
+    if not wf.startswith("deploy-staging-"):
+        continue
+    data = json.loads(subprocess.run(
+        ["argo", "get", "-n", "argo", wf, "-o", "json"],
+        capture_output=True, text=True, check=True,
+    ).stdout)
+    nodes = data.get("status", {}).get("nodes", {}).values()
+    if any(n.get("displayName") == "approve-production" and n.get("phase") == "Running" for n in nodes):
+        candidates.append((data["metadata"]["creationTimestamp"], wf))
+
+if not candidates:
+    print("ERROR: no deploy-staging-* workflow is currently suspended at approve-production "
+          "(see: argo list -n argo)", file=sys.stderr)
+    sys.exit(1)
+
+candidates.sort()
+chosen = candidates[-1][1]
+if len(candidates) > 1:
+    others = ", ".join(wf for _, wf in candidates[:-1])
+    print(f"==> Multiple suspended deploy-staging workflows found; approving the newest "
+          f"({chosen}); will stop: {others}", file=sys.stderr)
+print(chosen)
+EOF
+)
 fi
 
 echo "==> Resuming ${NAME} (promotes its build to production)"
