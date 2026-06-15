@@ -1,12 +1,13 @@
-# Five IRSA roles, each trusted by the EKS OIDC provider and scoped to a single
+# Six IRSA roles, each trusted by the EKS OIDC provider and scoped to a single
 # Kubernetes service account via the "sub" condition.
 
 locals {
-  oidc_sub_argo_workflows = "system:serviceaccount:argo:argo-workflows"
-  oidc_sub_alb_controller = "system:serviceaccount:kube-system:aws-load-balancer-controller"
-  oidc_sub_external_dns   = "system:serviceaccount:kube-system:external-dns"
-  oidc_sub_autoscaler     = "system:serviceaccount:kube-system:cluster-autoscaler"
-  oidc_sub_ebs_csi_driver = "system:serviceaccount:kube-system:ebs-csi-controller-sa"
+  oidc_sub_argo_workflows      = "system:serviceaccount:argo:argo-workflows"
+  oidc_sub_alb_controller      = "system:serviceaccount:kube-system:aws-load-balancer-controller"
+  oidc_sub_external_dns        = "system:serviceaccount:kube-system:external-dns"
+  oidc_sub_autoscaler          = "system:serviceaccount:kube-system:cluster-autoscaler"
+  oidc_sub_ebs_csi_driver      = "system:serviceaccount:kube-system:ebs-csi-controller-sa"
+  oidc_sub_cloudwatch_exporter = "system:serviceaccount:monitoring:cloudwatch-exporter"
 }
 
 # --- 1. argo-workflows-ecr ---
@@ -258,4 +259,55 @@ resource "aws_iam_role" "ebs_csi_driver" {
 resource "aws_iam_role_policy_attachment" "ebs_csi_driver" {
   role       = aws_iam_role.ebs_csi_driver.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
+}
+
+# --- 6. cloudwatch-exporter (yet-another-cloudwatch-exporter, WAF metrics) ---
+
+data "aws_iam_policy_document" "cloudwatch_exporter_trust" {
+  statement {
+    effect  = "Allow"
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+
+    principals {
+      type        = "Federated"
+      identifiers = [var.oidc_provider_arn]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "${var.oidc_provider_url}:sub"
+      values   = [local.oidc_sub_cloudwatch_exporter]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "${var.oidc_provider_url}:aud"
+      values   = ["sts.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role" "cloudwatch_exporter" {
+  name               = "cloudwatch-exporter"
+  assume_role_policy = data.aws_iam_policy_document.cloudwatch_exporter_trust.json
+  tags               = var.tags
+}
+
+data "aws_iam_policy_document" "cloudwatch_exporter" {
+  statement {
+    effect = "Allow"
+    actions = [
+      "cloudwatch:GetMetricData",
+      "cloudwatch:GetMetricStatistics",
+      "cloudwatch:ListMetrics",
+      "tag:GetResources",
+    ]
+    resources = ["*"]
+  }
+}
+
+resource "aws_iam_role_policy" "cloudwatch_exporter" {
+  name   = "cloudwatch-read"
+  role   = aws_iam_role.cloudwatch_exporter.id
+  policy = data.aws_iam_policy_document.cloudwatch_exporter.json
 }

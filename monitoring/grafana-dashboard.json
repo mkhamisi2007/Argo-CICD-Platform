@@ -97,8 +97,8 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "targets": [
         {
-          "expr": "sum(rate(aws_wafv2_blocked_requests_sum{namespace=\"argo-cicd\"}[5m]))",
-          "legendFormat": "blocked req/s",
+          "expr": "sum(aws_wafv2_blocked_requests_sum{dimension_WebACL=\"argo-cicd-cluster-waf\"})",
+          "legendFormat": "blocked requests (5m)",
           "refId": "A"
         }
       ]
