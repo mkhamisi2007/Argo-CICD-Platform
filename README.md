@@ -274,6 +274,25 @@ Username is `admin`; get the auto-generated password with:
 kubectl get secret -n monitoring prometheus-stack-grafana -o jsonpath='{.data.admin-password}' | base64 -d; echo
 ```
 
+### The `argo-cicd-platform` dashboard
+
+Provisioned via `make apply-grafana-dashboard` (`monitoring/grafana-dashboard.json`,
+loaded by the kube-prometheus-stack dashboard sidecar). It auto-refreshes every 30s
+over a 6h window and has 6 panels:
+
+| # | Panel | What it shows | Query source |
+| --- | --- | --- | --- |
+| 1 | **Request Rate (req/s)** | Throughput of the app — total HTTP requests/sec, averaged over a 5-min window. | `http_requests_total` from the app's `/metrics` endpoint (`prometheus-fastapi-instrumentator`). |
+| 2 | **Error Rate (%)** | Percentage of requests returning a `5xx` status, over the same 5-min window. `or vector(0)` shows `0%` instead of "no data" when there are zero errors. | Same `http_requests_total`, filtered by `status=~"5.."`. |
+| 3 | **p99 Latency (ms)** | 99th-percentile response time — the slowest 1% of requests. Early-warning signal for performance regressions. | `http_request_duration_seconds_bucket` histogram via `histogram_quantile(0.99, ...)`. |
+| 4 | **Rollout Phase** | State of the production Argo Rollout (canary deploy) over time — one line per phase (`Progressing`, `Paused`, `Healthy`, `Degraded`, `Aborted`, etc.), so you can see exactly when a deploy entered/left each phase. | `rollout_phase{exported_namespace="production", name="argo-cicd-app"}` from the Argo Rollouts controller. |
+| 5 | **Node Count** | Number of "ready" EC2 nodes in the EKS managed node group — visualizes Cluster Autoscaler scaling the cluster (2-5 `t3.medium`). | `cluster_autoscaler_nodes_count{state="ready"}`. |
+| 6 | **WAF Blocked Requests** | Requests AWS WAF blocked in the last 5-minute CloudWatch window for the `argo-cicd-cluster-waf` Web ACL — surfaces malicious/rate-limited traffic hitting the ALB. | `aws_wafv2_blocked_requests_sum{dimension_WebACL="argo-cicd-cluster-waf"}` via the YACE CloudWatch exporter. |
+
+Panels 1-3 are the app's golden signals (traffic, errors, latency), panel 4 shows
+what a canary deploy is doing right now, and panels 5-6 give cluster/infra context
+(autoscaling and WAF activity).
+
 ## Manually approving staging → production
 
 `deploy-pipeline` suspends after the staging smoke test + integration test. List
