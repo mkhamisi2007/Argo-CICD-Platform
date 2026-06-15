@@ -22,6 +22,7 @@ NAME ?=
 	fill-placeholders fill-slack-secret \
 	kubeconfig bootstrap github-secret \
 	apply-workflows apply-events apply-rollouts apply-cron apply-argo \
+	apply-grafana-dashboard \
 	approve-staging stop-staging watch-canary rollback-production \
 	helm-lint helm-template-staging helm-template-production \
 	test teardown clean
@@ -162,6 +163,17 @@ apply-cron: ## kubectl apply -f argo/cron/
 apply-argo: apply-workflows apply-events apply-rollouts apply-cron ## Apply all argo/ manifests
 	@echo ""
 	@echo "==> Next: make tf-apply   (second pass: associates WAF with the new ALB)"
+
+## --- Monitoring ----------------------------------------------------------------
+
+apply-grafana-dashboard: ## Load monitoring/grafana-dashboard.json into Grafana via a labeled ConfigMap (auto-loaded by the dashboard sidecar)
+	kubectl create configmap argo-cicd-app-dashboard -n monitoring \
+		--from-file=argo-cicd-app.json=monitoring/grafana-dashboard.json \
+		--dry-run=client -o yaml | \
+		kubectl label -f - --local --dry-run=client -o yaml grafana_dashboard=1 | \
+		kubectl apply -f -
+	@echo ""
+	@echo "==> Dashboard 'argo-cicd-platform' will appear in Grafana within ~1 minute."
 
 ## --- Operations ----------------------------------------------------------------
 
