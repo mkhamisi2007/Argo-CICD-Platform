@@ -57,6 +57,15 @@ data:
   trigger.on-rollout-aborted: |
     - send: [rollout-aborted]
       when: rollout.status.phase == 'Degraded'
+  template.rollout-completed: |
+    webhook:
+      slack:
+        method: POST
+        body: |
+          {"text": ":white_check_mark: Rollout {{.rollout.metadata.name}} in {{.rollout.metadata.namespace}} completed - canary fully promoted to 100% (stable)."}
+  trigger.on-rollout-completed: |
+    - send: [rollout-completed]
+      when: rollout.status.phase == 'Healthy'
 ---
 apiVersion: v1
 kind: Secret

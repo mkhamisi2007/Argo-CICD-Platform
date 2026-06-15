@@ -6,6 +6,12 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "argo-cicd-app.labels" . | nindent 4 }}
+  annotations:
+    # Argo Rollouts notifications (configured in argo/rollouts/analysis-template.yaml):
+    # posts to Slack when the canary is aborted/rolled back, and again when it
+    # finishes promoting to 100% (stable).
+    notifications.argoproj.io/subscribe.on-rollout-aborted.slack: ""
+    notifications.argoproj.io/subscribe.on-rollout-completed.slack: ""
 spec:
   replicas: {{ .Values.replicaCount }}
   revisionHistoryLimit: 3

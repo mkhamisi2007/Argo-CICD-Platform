@@ -12,6 +12,7 @@ metadata:
   namespace: production
   annotations:
     notifications.argoproj.io/subscribe.on-rollout-aborted.slack: ""
+    notifications.argoproj.io/subscribe.on-rollout-completed.slack: ""
 spec:
   replicas: 2
   revisionHistoryLimit: 3
@@ -27,7 +28,7 @@ spec:
     spec:
       containers:
         - name: argo-cicd-app
-          image: <ECR_URI>:<IMAGE_TAG>
+          image: 277707094115.dkr.ecr.us-east-1.amazonaws.com/argo-cicd-app-repo:<IMAGE_TAG>
           ports:
             - name: http
               containerPort: 8080

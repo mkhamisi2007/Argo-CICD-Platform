@@ -17,7 +17,7 @@ spec:
       - name: repo-url
         default: "https://github.com/your-org/argo-cicd-platform.git"
       - name: ecr-repo
-        default: "<ECR_REPO_URI>"
+        default: "277707094115.dkr.ecr.us-east-1.amazonaws.com/argo-cicd-app-repo"
       - name: release-name
         default: "argo-cicd-app"
       - name: app-namespace
@@ -26,11 +26,27 @@ spec:
   templates:
     - name: deploy
       steps:
+        - - name: notify-production-start
+            template: slack-message
+            when: "{{workflow.parameters.environment}} == production"
+            arguments:
+              parameters:
+                - name: text
+                  value: ":rocket: Production canary deploy starting for `{{workflow.parameters.image-tag}}` (workflow `{{workflow.name}}`) - watch with `make watch-canary`."
+
         - - name: deploy-helm
             template: deploy-helm
 
         - - name: smoke-test
             template: smoke-test
+
+        - - name: notify-staging-ready
+            template: slack-message
+            when: "{{workflow.parameters.environment}} == staging"
+            arguments:
+              parameters:
+                - name: text
+                  value: ":mag: Staging ready for review: `{{workflow.parameters.image-tag}}` passed the smoke test at https://staging.app.m-khamisi.com - approve with `make approve-staging NAME={{workflow.name}}`."
 
         - - name: approve-production
             template: approve
@@ -142,14 +158,30 @@ spec:
                 - name: app-namespace
                   value: production
 
-    # --- notify-slack: exit handler, posts only when the workflow did not succeed ---
+    # --- notify-slack: exit handler ---
     - name: notify-slack
       steps:
-        - - name: notify
+        - - name: notify-failure
             template: slack-message
             when: "{{workflow.status}} != Succeeded"
+            arguments:
+              parameters:
+                - name: text
+                  value: ":x: Deploy *{{workflow.parameters.environment}}* of `{{workflow.parameters.image-tag}}` {{workflow.status}}: {{workflow.name}}"
 
+          - name: notify-production-deployed
+            template: slack-message
+            when: "{{workflow.status}} == Succeeded && {{workflow.parameters.environment}} == production"
+            arguments:
+              parameters:
+                - name: text
+                  value: ":white_check_mark: Production deploy-pipeline for `{{workflow.parameters.image-tag}}` finished - canary is rolling out, watch with `make watch-canary` (a separate Slack message arrives once it completes)."
+
+    # --- slack-message: generic Slack post, given an input "text" ---
     - name: slack-message
+      inputs:
+        parameters:
+          - name: text
       container:
         image: curlimages/curl:8.7.1
         command: ["sh", "-c"]
@@ -157,11 +189,8 @@ spec:
           - |
             set -ex
             curl -fsS -X POST -H 'Content-type: application/json' \
-              --data "{\"text\":\":x: Deploy *{{workflow.parameters.environment}}* of \`{{workflow.parameters.image-tag}}\` ${WORKFLOW_STATUS}: {{workflow.name}}\"}" \
+              --data "{\"text\":\"{{inputs.parameters.text}}\"}" \
               "$(cat /etc/slack/url)"
-        env:
-          - name: WORKFLOW_STATUS
-            value: "{{workflow.status}}"
         volumeMounts:
           - name: slack-webhook
             mountPath: /etc/slack

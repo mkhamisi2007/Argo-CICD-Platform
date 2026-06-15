@@ -9,10 +9,12 @@ HELM_DIR := helm/app
 # Override on the command line, e.g.:
 #   make github-secret GITHUB_PAT=ghp_xxx GITHUB_WEBHOOK_SECRET=mysecret
 #   make bootstrap SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...
+#   make approve-staging NAME=deploy-staging-xxxxx
 # (command-line values always win over .env)
 SLACK_WEBHOOK_URL ?=
 GITHUB_PAT ?=
 GITHUB_WEBHOOK_SECRET ?=
+NAME ?=
 
 .DEFAULT_GOAL := help
 .PHONY: help \
@@ -20,6 +22,7 @@ GITHUB_WEBHOOK_SECRET ?=
 	fill-placeholders fill-slack-secret \
 	kubeconfig bootstrap github-secret \
 	apply-workflows apply-events apply-rollouts apply-cron apply-argo \
+	approve-staging stop-staging watch-canary \
 	helm-lint helm-template-staging helm-template-production \
 	test teardown clean
 
@@ -35,6 +38,11 @@ help: ## Show this help and the recommended run order
 	@echo "  8.  make github-secret GITHUB_PAT=... GITHUB_WEBHOOK_SECRET=..."
 	@echo "  9.  make apply-argo"
 	@echo "  10. make tf-apply   (second pass: associates WAF with the new ALB)"
+	@echo ""
+	@echo "Operations:"
+	@echo "  make approve-staging NAME=deploy-staging-xxxxx   (promote to production, stop other stale approvals)"
+	@echo "  make stop-staging NAME=deploy-staging-xxxxx      (discard one stale suspended approval manually)"
+	@echo "  make watch-canary                                (watch the production canary rollout)"
 	@echo ""
 	@echo "Teardown:"
 	@echo "  make teardown"
@@ -151,6 +159,21 @@ apply-cron: ## kubectl apply -f argo/cron/
 apply-argo: apply-workflows apply-events apply-rollouts apply-cron ## Apply all argo/ manifests
 	@echo ""
 	@echo "==> Next: make tf-apply   (second pass: associates WAF with the new ALB)"
+
+## --- Operations ----------------------------------------------------------------
+
+approve-staging: ## Resume NAME=deploy-staging-xxxxx for production, stopping any other stale suspended deploy-staging-* workflows
+	@test -n "$(NAME)" || (echo "NAME is required, e.g. make approve-staging NAME=deploy-staging-xxxxx (see: argo list -n argo)" && exit 1)
+	./scripts/approve-staging.sh $(NAME)
+	@echo ""
+	@echo "==> Next: make watch-canary"
+
+stop-staging: ## Stop a stale suspended deploy-staging workflow (NAME=deploy-staging-xxxxx)
+	@test -n "$(NAME)" || (echo "NAME is required, e.g. make stop-staging NAME=deploy-staging-xxxxx (see: argo list -n argo)" && exit 1)
+	argo stop -n argo $(NAME)
+
+watch-canary: ## Watch the production canary rollout
+	kubectl argo rollouts get rollout argo-cicd-app -n production --watch
 
 ## --- Verification --------------------------------------------------------------
 
