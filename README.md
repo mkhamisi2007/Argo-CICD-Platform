@@ -241,6 +241,8 @@ argo list -n argo
 argo logs -n argo @latest -f
 ```
 
+<img width="1274" height="767" alt="image" src="https://github.com/user-attachments/assets/5b0fb7e1-373e-435b-a8e3-859d6e8e5a3d" />
+
 ## Watching a canary rollout
 
 Once `deploy-pipeline` runs for `environment: production`, Argo Rollouts starts the
@@ -256,6 +258,9 @@ Or open the Argo Rollouts dashboard:
 ```bash
 kubectl argo rollouts dashboard -n argo-rollouts
 ```
+
+<img width="1271" height="720" alt="image" src="https://github.com/user-attachments/assets/c08320e9-f73a-4911-94c3-7285707c9f12" />
+
 
 ## Monitoring (Grafana)
 
@@ -273,6 +278,8 @@ Username is `admin`; get the auto-generated password with:
 ```bash
 kubectl get secret -n monitoring prometheus-stack-grafana -o jsonpath='{.data.admin-password}' | base64 -d; echo
 ```
+
+<img width="1279" height="772" alt="image" src="https://github.com/user-attachments/assets/c4f5dc5b-39f2-4a34-a8e8-90109f36b236" />
 
 ### The `argo-cicd-platform` dashboard
 
@@ -309,6 +316,8 @@ when:
 | Someone runs **`make rollback-production`** manually | Direct `curl` to the webhook in the Makefile target |
 | The **health-check CronWorkflow** (every 30 min) finds `/health` unhealthy or p99 latency over 500ms | `notify-slack` `onExit` handler in `argo/cron/health-check-cron.yaml` (posts only on failure) |
 | Prometheus alerts fire: **HighErrorRate** (>5% 5xx for 2m), **HighLatency** (p99 > 500ms for 2m), or **RolloutFailed** (Rollout phase `Degraded`) | Alertmanager's `slack` receiver (`monitoring/prometheus-values.yaml`) |
+
+<img width="1280" height="724" alt="image" src="https://github.com/user-attachments/assets/0f6dadc0-3614-40b0-9464-774a7fb76e29" />
 
 ## Manually approving staging → production
 
