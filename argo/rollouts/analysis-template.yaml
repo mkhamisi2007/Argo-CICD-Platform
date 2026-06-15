@@ -35,8 +35,9 @@ spec:
 ---
 # Argo Rollouts notification subscription: fires when the Rollout (referenced via
 # the "notifications.argoproj.io/subscribe..." annotation in rollout-production.yaml)
-# is aborted by a failed analysis run, posting to the same Slack incoming webhook
-# used by the Argo Workflows pipelines.
+# is aborted - either automatically by a failed analysis run, or manually via
+# `make rollback-production` - posting to the same Slack incoming webhook used by
+# the Argo Workflows pipelines.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -53,7 +54,7 @@ data:
       slack:
         method: POST
         body: |
-          {"text": ":rotating_light: Rollout {{.rollout.metadata.name}} in {{.rollout.metadata.namespace}} was aborted - canary analysis failed, auto-rolled-back to stable."}
+          {"text": ":rotating_light: Rollout {{.rollout.metadata.name}} in {{.rollout.metadata.namespace}} was aborted - rolling back to the previous stable version (canary analysis failure or manual rollback)."}
   trigger.on-rollout-aborted: |
     - send: [rollout-aborted]
       when: rollout.status.phase == 'Degraded'

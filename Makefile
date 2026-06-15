@@ -179,6 +179,13 @@ watch-canary: ## Watch the production canary rollout
 rollback-production: ## Abort the current canary and roll back production to the previous stable version
 	kubectl argo rollouts abort argo-cicd-app -n production
 	kubectl argo rollouts undo argo-cicd-app -n production
+	@if [ -n "$(SLACK_WEBHOOK_URL)" ]; then \
+		curl -fsS -X POST -H 'Content-type: application/json' \
+			--data '{"text":":leftwards_arrow_with_hook: Manual rollback triggered for *production* (argo-cicd-app) via make rollback-production"}' \
+			"$(SLACK_WEBHOOK_URL)" >/dev/null || true; \
+	else \
+		echo "(set SLACK_WEBHOOK_URL in .env to also post a Slack message for manual rollbacks)"; \
+	fi
 	@echo ""
 	@echo "==> Next: make watch-canary"
 
